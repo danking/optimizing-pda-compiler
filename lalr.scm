@@ -148,73 +148,15 @@
 ;; Send questions, comments or suggestions to boucherd@iro.umontreal.ca   ;;
 ;; ---------------------------------------------------------------------- ;;
 
-;;; ---------- SYSTEM DEPENDENT SECTION -----------------
+(define-syntax def-macro 
+  (syntax-rules ()
+    ((def-macro (name form ...) body ...)
+     (define-syntax name 
+       (syntax-rules ()
+	 ((name form ...) (let () body ...)))))))
 
-;; -------- SCM
-;'(begin
-;  (defmacro def-macro (args body)
-;    `(defmacro ,(car args) ,(cdr args) ,body))
-;  
-;  (def-macro (BITS-PER-WORD) 24)
-;  (def-macro (logical-or x . y) `(logior ,x ,@y))
-;  )
-
-;; -------- MIT-Scheme 
-;(begin
-;  (declare (usual-integrations))
-;  
-;  (define-macro (def-macro form . body)
-;    `(DEFINE-MACRO ,form (LET () ,@body)))
-;    
-;  (def-macro (BITS-PER-WORD) 24)
-;  (def-macro (logical-or x . y) `(fix:or ,x ,@y))
-;  )
-
-;; -------- Gambit
-'(begin
-   
- (declare 
-  (standard-bindings)
-  (fixnum)
-  (block)
-  (not safe))
-
- (define-syntax '()
-   ((def-macro form . body)
-    '(define-syntax '()
-      (,form (LET () ,@body)))))
-    
-  (def-macro (BITS-PER-WORD) 28)
-  (def-macro (logical-or x  y) `(,(string->symbol "##logior") ,x ,@y))
-  )
-
-;;-------- Scsh
-(begin
- (define-syntax def-macro 
-   (syntax-rules ()
-     ((def-macro (name form ...) body ...)
-      (define-syntax name 
-	(syntax-rules ()
-	  ((name form ...) (let () body ...)))))))
-    
-  (def-macro (BITS-PER-WORD) 28)
-  (def-macro (logical-or x  y ...) (bitwise-ior x y ...))
-)
-;; -------- Bigloo 
-;'(begin	    
-; (define-macro (def-macro form . body)
-;    `(DEFINE-MACRO ,form (LET () ,@body)))
-; (def-macro (BITS-PER-WORD) 16)
-; (def-macro (logical-or x . y) `(bit-or ,x ,@y))
-; )
-
-;;; ---------- END OF SYSTEM DEPENDENT SECTION ------------
-(define-record prod-action
-  production
-  action
-  prec)
-
-;; - Macros pour la gestion des vecteurs de bits
+(def-macro (BITS-PER-WORD) 28)
+(def-macro (logical-or x  y ...) (bitwise-ior x y ...))
 
 ;; ILYA: This function toggles the bth bit of first 
 ;; element of vector v.
@@ -261,25 +203,19 @@
 (def-macro (red-nreds c)            (vector-ref c 1))
 (def-macro (red-rules c)            (vector-ref c 2))
 
-
 ;; ILYA: make a vector of nelem elements and initialize all 
 ;; elements to 0
 (def-macro (new-set nelem)
   (make-vector nelem 0))
 
-;; ILYA: (weird!) UNUSED
-(def-macro (vector-map f v)
-  (let ((vm-n (- (vector-length v) 1)))
-    (let loop ((vm-low 0) (vm-high vm-n))
-      (if (= vm-low vm-high)
-	  (vector-set! v vm-low (f (vector-ref v vm-low) vm-low))
-	  (let ((vm-middle (quotient (+ vm-low vm-high) 2)))
-	    (loop vm-low vm-middle)
-	    (loop (+ vm-middle 1) vm-high))))))
-
+(define-record prod-action
+  production
+  action
+  prec)
 
 ;; - Constantes
 (define STATE-TABLE-SIZE 1009)
+(define eoi '*EOI*)
 
 ;; - Tableaux 
 ;; ILYA: for each global variable I provide a set of functions where
@@ -357,71 +293,16 @@
 (define maxrhs          #f)
 (define ngotos          #f)
 (define token-set-size  #f)
-(define left-assoc      #f)
-(define right-assoc     #f)
-(define non-assoc       #f)
-(define precedence      #f)
 (define rule-preced     #f)
 (define grammar #f)
+(define global-terms #f)
+
 
 ;; ILYA: TODO: construct a call graph
 (define (gen-lalr1 gram output-file . opt)
   (initialize-all)
-  (rewrite-grammar 
-   gram
-   (lambda (terms vars gram gram/actions la ra na prec rprec)
-     (set! grammar gram) 
-     (set! left-assoc la)
-     (set! right-assoc ra)
-     (set! non-assoc na)
-     (set! precedence prec)
-     (set! rule-preced (list->vector rprec))
-     (set! the-terminals (list->vector terms))
-     (set! the-nonterminals (list->vector vars))
-     (set! nterms (length terms))
-     (set! nvars  (length vars))
-     (set! nsyms  (+ nterms nvars))
-     (let ((no-of-rules (length gram/actions))
-	   (no-of-items (let loop ((l gram/actions) (count 0))
-			  (if (null? l) 
-			      count
-			      (loop (cdr l) (+ count (length (caar l))))))))
-       (pack-grammar no-of-rules no-of-items gram)
-       (calculate-precedence)
-       (set-derives)
-       (set-nullable)
-       (generate-states)
-       (lalr)
-       (build-tables)
-       (compact-action-table)
-       (let* ((parser-name (if (and (pair? opt) (symbol? (car opt))) (car opt) #f))
-	      (prefix      (if parser-name 
-			       (string-append
-				(symbol->string parser-name)
-				":")
-			       ""))
-	      (parser-prefix (if parser-name
-				  (string-append (symbol->string parser-name) "-")
-				 "")))
-	 (with-output-to-file output-file
-	   (lambda ()
-	     (display "; *** Token Definitions ***")
-	     (newline)
-	     (output-token-defs terms prefix)
-	     (display "; *** Action Table ***")
-	     (newline)
-	     (output-action-table prefix)
-	     (display "; *** Goto Table ***")
-	     (newline)
-	     (output-goto-table prefix)
-	     (display "; *** Reduction Table ***")
-	     (newline)
-	    ; (output-reduction-table gram/actions prefix)
-	     (display "; *** Parser Definition ***")
-	     (newline)
-	   ;  (output-parser-def parser-prefix prefix)
-	     )))))))
-
+  (rewrite-grammar gram)
+  (output-to-file output-file opt) )  ;; see utils-io.scm)
 
 (define (initialize-all)
   (set! rrhs         #f)
@@ -464,6 +345,143 @@
   (set! ngotos          #f)
   (set! token-set-size  #f))
 
+(define (do-things terms vars gram gram/actions la ra na prec rprec)
+  
+  (set! rule-preced (list->vector rprec))
+  (set! the-terminals (list->vector terms))
+  (set! the-nonterminals (list->vector vars))
+  (set! nterms (length terms))
+  (set! nvars  (length vars))
+  (set! nsyms  (+ nterms nvars))
+  (set! global-terms terms)
+
+  (let ( (no-of-rules (length gram/actions))
+	 (no-of-items (let loop ((l gram/actions) (count 0))
+			(if (null? l) 
+			    count
+			    (loop (cdr l) (+ count (length (caar l))))))))
+    (pack-grammar no-of-rules no-of-items gram)
+    (calculate-precedence)
+    (set-derives)
+    (set-nullable)
+    (generate-states)
+    (lalr)
+    (build-tables prec ra na)
+    (compact-action-table) ) )
+
+(define (check-term term rv)
+  (cond ((not (valid-terminal? term)) (error "Invalid terminal:" term))
+	((member term rv) (error "Terminal previously defined:" term))
+	(else (cons term rv))) )
+
+(define (process-assoc it r-terms ass prec)
+  (if (null? it) 
+      (values r-terms ass prec)
+      (process-assoc (cdr it) 
+		     (check-term (car it) r-terms) 
+		     (cons (car it) ass) 
+		     (cons (car it) prec))) )
+  
+(define (rewrite-grammar grammar) 
+  (let ( (terms (if (not (pair? grammar))
+		    (error "Grammar definition must be a non-empty list")
+		    (car grammar)) )
+	 (rules (cdr grammar)) )
+    (let term-loop ( (terms terms) 
+		     (rev-terms '())
+		     (r-assoc '()) 
+		     (l-assoc '())
+		     (non-assoc '())
+		     (prec '()) )
+	(if (not (null? terms)) 
+	    (if (not (pair? (car terms)))
+		(term-loop (cdr terms)
+			   (check-term (car terms) rev-terms)
+			   r-assoc
+			   l-assoc
+			   non-assoc
+			   prec)
+		(receive (r-terms ass p) (process-assoc (cdar terms) 
+							rev-terms 
+							'() 
+							'()) 
+			 (cond ( (eq? (caar terms) 'right)
+				 (term-loop (cdr terms) 
+					    r-terms
+					    (append ass r-assoc)
+					    l-assoc 
+					    non-assoc
+					    (cons p prec)) )
+			       ( (eq? (caar terms) 'left)
+				 (term-loop (cdr terms) 
+					    r-terms
+					    r-assoc
+					    (append ass l-assoc) 
+					    non-assoc
+					    (cons p prec)) )
+			       ( (eq? (caar terms) 'non)
+				 (term-loop (cdr terms) 
+					    r-terms
+					    r-assoc
+					    l-assoc
+					    (append ass non-assoc)
+					    (cons p prec)) )
+			       (else (error "Associativity unknown:" (caar terms))) )))
+	    (begin 
+	     
+	      (any (lambda (rule) 
+		     (if (not (pair? rule))
+			 (error "Nonterminal definition must be a non-empty list")
+			 (cond ((not (valid-nonterminal? (car rule)))
+				(error "Invalid nonterminal:" (car rule)))
+			       ((member (car rule) rev-terms)
+				(error "Nonterminal previously defined:" (car rule))) )))
+		   rules)
+	     
+	      (let* ( (terms (cons eoi (reverse rev-terms)))
+		      (nonterms (if (null? rules) 
+				    (error "Grammar must contain at least one nonterminal")
+				    (cons '*start* 
+					  (fold-right 
+					   (lambda (rule nts)
+					     (if (member (car rule) nts) 
+						 (error "Nonterminal previously defined:"
+							(car rule))
+						 (cons (car rule) nts)))
+					   '()
+					   rules))) )		    
+		      (compiled-nonterminals
+		       (map (lambda (rule)
+			      (rewrite-nonterm-def rule
+						   terms
+						   nonterms))
+			    (cons `(*start* ((,(cadr nonterms) ,eoi) 
+					     $1))
+				  rules))) )
+	
+		(do-things terms
+			   nonterms
+			   (map (lambda (x) (cons (caar x) (map cdr x)))
+				(map (lambda (x) 
+				       (map prod-action:production x))
+				     compiled-nonterminals))
+			   (apply append 
+				  (map (lambda (y)
+					 (map (lambda (x) 
+						(cons (prod-action:production x)
+						      (prod-action:action x)))
+					      y))
+				       compiled-nonterminals))
+			   l-assoc
+			   r-assoc
+			   non-assoc
+			   (reverse prec)
+			   (cons #f
+				 (apply append
+					(map (lambda (x) (map 
+							  prod-action:prec
+							  x))
+					     compiled-nonterminals))))))) ) ) )
 
 (define (pack-grammar no-of-rules no-of-items gram)
   (set! nrules (+  no-of-rules 1))
@@ -490,35 +508,30 @@
 			  (vector-set! ritem it-no3 (car rhs))
 			  (loop3 (cdr rhs) (+ it-no3 1))))))))))))
 
-
 ;; Fonction set-derives
 ;; --------------------
 (define (set-derives)
-  (define delts (make-vector (+ nrules 1) 0))
-  (define dset  (make-vector nvars -1))
-
-  (let loop ((i 1) (j 0))		; i = 0
-    (if (< i nrules)
-	(let ((lhs (vector-ref rlhs i)))
-	  (if (>= lhs 0)
-	      (begin
-		(vector-set! delts j (cons i (vector-ref dset lhs)))
-		(vector-set! dset lhs j)
-		(loop (+ i 1) (+ j 1)))
-	      (loop (+ i 1) j)))))
-  
-  (set! derives (make-vector nvars 0))
-  (let loop ((i 0))
-    (if (< i nvars)
-	(let ((q (let loop2 ((j (vector-ref dset i)) (s '()))
-		   (if (< j 0)
-		       s
-		       (let ((x (vector-ref delts j)))
-			 (loop2 (cdr x) (cons (car x) s)))))))
-	  (vector-set! derives i q)
-	  (loop (+ i 1))))))
-
-
+  (let ( (delts (make-vector (+ nrules 1) 0))
+	 (dset  (make-vector nvars -1)) )
+    (let loop ((i 1) (j 0))		; i = 0
+      (if (< i nrules)
+	  (let ((lhs (vector-ref rlhs i)))
+	    (if (>= lhs 0)
+		(begin
+		  (vector-set! delts j (cons i (vector-ref dset lhs)))
+		  (vector-set! dset lhs j)
+		  (loop (+ i 1) (+ j 1)))
+		(loop (+ i 1) j)))))   
+    (set! derives (make-vector nvars 0))
+    (let loop ((i 0))
+      (if (< i nvars)
+	  (let ((q (let loop2 ((j (vector-ref dset i)) (s '()))
+		     (if (< j 0)
+			 s
+			 (let ((x (vector-ref delts j)))
+			   (loop2 (cdr x) (cons (car x) s)))))))
+	    (vector-set! derives i q)
+	    (loop (+ i 1)))))) )
 
 (define (set-nullable)
   (set! nullable (make-vector nvars #f))
@@ -648,35 +661,32 @@
 
 (define (closure core)
   ;; Initialization
-  (define ruleset (make-vector nrules #f))
-
-  (let loop ((csp core))
-    (if (not (null? csp))
-	(let ((sym (vector-ref ritem (car csp))))
-	  (if (< -1 sym nvars)
-	      (let loop2 ((dsp (vector-ref fderives sym)))
-		(if (not (null? dsp))
-		    (begin
-		      (vector-set! ruleset (car dsp) #t)
-		      (loop2 (cdr dsp))))))
-	  (loop (cdr csp)))))
-
-  (let loop ((ruleno 1) (csp core) (itemsetv '())) ; ruleno = 0
-    (if (< ruleno nrules)
-	(if (vector-ref ruleset ruleno)
-	    (let ((itemno (vector-ref rrhs ruleno)))
-	      (let loop2 ((c csp) (itemsetv2 itemsetv))
-		(if (and (pair? c)
-			 (< (car c) itemno))
-		    (loop2 (cdr c) (cons (car c) itemsetv2))
-		    (loop (+ ruleno 1) c (cons itemno itemsetv2)))))
-	    (loop (+ ruleno 1) csp itemsetv))
-	(let loop2 ((c csp) (itemsetv2 itemsetv))
-	  (if (pair? c)
-	      (loop2 (cdr c) (cons (car c) itemsetv2))
-	      (reverse itemsetv2))))))
-
-
+  (let ( (ruleset (make-vector nrules #f)) )
+    (let loop ((csp core))
+      (if (not (null? csp))
+	  (let ((sym (vector-ref ritem (car csp))))
+	    (if (< -1 sym nvars)
+		(let loop2 ((dsp (vector-ref fderives sym)))
+		  (if (not (null? dsp))
+		      (begin
+			(vector-set! ruleset (car dsp) #t)
+			(loop2 (cdr dsp))))))
+	    (loop (cdr csp)))))
+    
+    (let loop ((ruleno 1) (csp core) (itemsetv '())) ; ruleno = 0
+      (if (< ruleno nrules)
+	  (if (vector-ref ruleset ruleno)
+	      (let ((itemno (vector-ref rrhs ruleno)))
+		(let loop2 ((c csp) (itemsetv2 itemsetv))
+		  (if (and (pair? c)
+			   (< (car c) itemno))
+		      (loop2 (cdr c) (cons (car c) itemsetv2))
+		      (loop (+ ruleno 1) c (cons itemno itemsetv2)))))
+	      (loop (+ ruleno 1) csp itemsetv))
+	  (let loop2 ((c csp) (itemsetv2 itemsetv))
+	    (if (pair? c)
+		(loop2 (cdr c) (cons (car c) itemsetv2))
+		(reverse itemsetv2)))))) )
 
 (define (allocate-item-sets)
   (set! kernel-base (make-vector nsyms 0))
@@ -891,11 +901,6 @@
 	  (set! maxrhs curmax)))))
 
 (define (initialize-LA)
-  (define (last l)
-    (if (null? (cdr l))
-	(car l)
-	(last (cdr l))))
-
   (set! consistent (make-vector nstates #f))
   (set! lookaheads (make-vector (+ nstates 1) #f))
 
@@ -1076,57 +1081,53 @@
 
 
 (define (build-relations)
-
-  (define (get-state stateno symbol)
-    (let loop ((j (shift-shifts (vector-ref shift-table stateno)))
-	       (stno stateno))
-      (if (null? j)
-	  stno
-	  (let ((st2 (car j)))
-	    (if (= (vector-ref acces-symbol st2) symbol)
-		st2
-		(loop (cdr j) st2))))))
-
-  (set! includes (make-vector ngotos #f))
-  (do ((i 0 (+ i 1)))
-      ((= i ngotos))
-    (let ((state1 (vector-ref from-state i))
-	  (symbol1 (vector-ref acces-symbol (vector-ref to-state i))))
-      (let loop ((rulep (vector-ref derives symbol1))
-		 (edges '()))
-	(if (pair? rulep)
-	    (let ((*rulep (car rulep)))
-	      (let loop2 ((rp (vector-ref rrhs *rulep))
-			  (stateno state1)
-			  (states (list state1)))
-		(let ((*rp (vector-ref ritem rp)))
-		  (if (> *rp 0)
-		      (let ((st (get-state stateno *rp)))
-			(loop2 (+ rp 1) st (cons st states)))
-		      (begin
-
-			(if (not (vector-ref consistent stateno))
-			    (add-lookback-edge stateno *rulep i))
+  (let ( (get-state (lambda (stateno symbol)
+		      (let loop ((j (shift-shifts (vector-ref shift-table stateno)))
+				 (stno stateno))
+			(if (null? j)
+			    stno
+			    (let ((st2 (car j)))
+			      (if (= (vector-ref acces-symbol st2) symbol)
+				  st2
+				  (loop (cdr j) st2))))))) )
+    (set! includes (make-vector ngotos #f))
+    (do ((i 0 (+ i 1)))
+	((= i ngotos))
+      (let ((state1 (vector-ref from-state i))
+	    (symbol1 (vector-ref acces-symbol (vector-ref to-state i))))
+	(let loop ((rulep (vector-ref derives symbol1))
+		   (edges '()))
+	  (if (pair? rulep)
+	      (let ((*rulep (car rulep)))
+		(let loop2 ((rp (vector-ref rrhs *rulep))
+			    (stateno state1)
+			    (states (list state1)))
+		  (let ((*rp (vector-ref ritem rp)))
+		    (if (> *rp 0)
+			(let ((st (get-state stateno *rp)))
+			  (loop2 (+ rp 1) st (cons st states)))
+			(begin
+			  
+			  (if (not (vector-ref consistent stateno))
+			      (add-lookback-edge stateno *rulep i))
+			  
+			  (let loop2 ((done #f) 
+				      (stp (cdr states))
+				      (rp2 (- rp 1))
+				      (edgp edges))
+			    (if (not done)
+				(let ((*rp (vector-ref ritem rp2)))
+				  (if (< -1 *rp nvars)
+				      (loop2 (not (vector-ref nullable *rp))
+					     (cdr stp)
+					     (- rp2 1)
+					     (cons (map-goto (car stp) *rp) edgp))
+				      (loop2 #t stp rp2 edgp)))
+				
+				(loop (cdr rulep) edgp))))))))
+	      (vector-set! includes i edges)))))
+    (set! includes (transpose includes ngotos))) )
 			
-			(let loop2 ((done #f) 
-				    (stp (cdr states))
-				    (rp2 (- rp 1))
-				    (edgp edges))
-			  (if (not done)
-			      (let ((*rp (vector-ref ritem rp2)))
-				(if (< -1 *rp nvars)
-				  (loop2 (not (vector-ref nullable *rp))
-					 (cdr stp)
-					 (- rp2 1)
-					 (cons (map-goto (car stp) *rp) edgp))
-				  (loop2 #t stp rp2 edgp)))
-
-			      (loop (cdr rulep) edgp))))))))
-	    (vector-set! includes i edges)))))
-  (set! includes (transpose includes ngotos)))
-			
-
-
 (define (compute-lookaheads)
   (let ((n (vector-ref lookaheads nstates)))
     (let loop ((i 0))
@@ -1137,60 +1138,55 @@
 		      (F-j  (vector-ref F (car sp))))
 		  (bit-union LA-i F-j token-set-size)
 		  (loop2 (cdr sp)))
-		(loop (+ i 1))))))))
+		(loop (+ i 1))))))) )
 
-
-
-(define (digraph relation)
-  (define infinity (+ ngotos 2))
-  (define INDEX (make-vector (+ ngotos 1) 0))
-  (define VERTICES (make-vector (+ ngotos 1) 0))
-  (define top 0)
-  (define R relation)
-
-  (define (traverse i)
+(define (traverse i INDEX R VERTICES top)
+  (let ( (infinity (+ ngotos 2)) )	  
     (set! top (+ 1 top))
     (vector-set! VERTICES top i)
     (let ((height top))
-      (vector-set! INDEX i height)
-      (let ((rp (vector-ref R i)))
-	(if (pair? rp)
-	    (let loop ((rp2 rp))
-	      (if (pair? rp2)
-		  (let ((j (car rp2)))
-		    (if (= 0 (vector-ref INDEX j))
-			(traverse j))
-		    (if (> (vector-ref INDEX i) 
-			   (vector-ref INDEX j))
-			(vector-set! INDEX i (vector-ref INDEX j)))
-		    (let ((F-i (vector-ref F i))
-			  (F-j (vector-ref F j)))
-		      (bit-union F-i F-j token-set-size))
-		    (loop (cdr rp2))))))
-	(if (= (vector-ref INDEX i) height)
-	    (let loop ()
-	      (let ((j (vector-ref VERTICES top)))
-		(set! top (- top 1))
-		(vector-set! INDEX j infinity)
-		(if (not (= i j))
-		    (begin
-		      (bit-union (vector-ref F i) 
-				 (vector-ref F j)
-				 token-set-size)
-		      (loop)))))))))
+	(vector-set! INDEX i height)
+	(let ((rp (vector-ref R i)))
+	  (if (pair? rp)
+	      (let loop ((rp2 rp))
+		(if (pair? rp2)
+		    (let ((j (car rp2)))
+		      (if (= 0 (vector-ref INDEX j))
+			  (traverse j INDEX R VERTICES top))
+		      (if (> (vector-ref INDEX i) 
+			     (vector-ref INDEX j))
+			  (vector-set! INDEX i (vector-ref INDEX j)))
+		      (let ((F-i (vector-ref F i))
+			    (F-j (vector-ref F j)))
+			(bit-union F-i F-j token-set-size))
+		      (loop (cdr rp2))))))
+	  (if (= (vector-ref INDEX i) height)
+	      (let loop ()
+		(let ((j (vector-ref VERTICES top)))
+		  (set! top (- top 1))
+		  (vector-set! INDEX j infinity)
+		  (if (not (= i j))
+		      (begin
+			(bit-union (vector-ref F i) 
+				   (vector-ref F j)
+				   token-set-size)
+			(loop)))))))))) 
 
-  (let loop ((i 0))
-    (if (< i ngotos)
-	(begin
-	  (if (and (= 0 (vector-ref INDEX i))
-		   (pair? (vector-ref R i)))
-	      (traverse i))
-	  (loop (+ i 1))))))
-
+(define (digraph relation)
+  (let ( (INDEX (make-vector (+ ngotos 1) 0))
+	  (R relation) 
+	  (VERTICES (make-vector (+ ngotos 1) 0))
+	  (top 0) )
+    (let loop ((i 0))
+      (if (< i ngotos)
+	  (begin
+	    (if (and (= 0 (vector-ref INDEX i))
+		     (pair? (vector-ref R i)))
+		(traverse i INDEX R VERTICES top))
+	    (loop (+ i 1)))))) )
 
 ;; --
-
-(define (build-tables)
+(define (build-tables prec right-assoc non-assoc)
   (define (add-action St Sym Act)
     (let* ((x (vector-ref action-table St))
 	   (y (assv Sym x)))
@@ -1213,10 +1209,10 @@
 		      (let* ((state (list-ref first-state St))
 			     (token-sym (vector-ref the-terminals
 						    Sym))
-			     (token-prec (lookup-precedence token-sym))
-			     (rule-prec (lookup-precedence 
-					 (vector-ref rule-preced
-						     (- (cdr y))))))
+			     (token-prec (lookup-precedence prec token-sym))
+			     (rule-prec (lookup-precedence prec 
+							   (vector-ref rule-preced
+								       (- (cdr y))))))
 						    
 			(cond ((and (not rule-prec)
 				    (not token-prec))
@@ -1319,189 +1315,50 @@
 
 ;; --
 
-(define (rewrite-grammar grammar proc) 
-
-  (define eoi '*EOI*)
-  
-  (if (not (pair? grammar))
-      (error "Grammar definition must be a non-empty list")
-      (let term-loop ((terms (car grammar))
-		     (rev-terms '())
-		     (r-assoc '())
-		     (l-assoc '())
-		     (non-assoc '())
-		     (prec '())) 
-	(let ((check-term (lambda (term rv)
-			    (cond ((not (valid-terminal? term))
-				   (error "Invalid terminal:" term))
-				  ((member term rv)
-				   (error "Terminal previously defined:" term))
-				  (else
-				   (cons term rv))))))
-   
-
-	 (if (not (null? terms))
-	     (cond ((not (pair? (car terms)))  ;; normal definition of terminal
-		    (term-loop (cdr terms) 
-			       (check-term (car terms) rev-terms) 
-			       r-assoc 
-			       l-assoc 
-			       non-assoc 
-			       prec))
-		   ((eq? (caar terms) 'right)  ;;right associativity
-		    (let ral ((it (cdar terms))
-			       (r-terms rev-terms)
-			       (ra r-assoc)
-			       (p '()))
-		      (if (null? it)
-			  (term-loop (cdr terms) 
-				     r-terms
-				      ra
-				      l-assoc
-				      non-assoc
-				      (cons p prec))
-			   (ral (cdr it) 
-				(check-term (car it) r-terms)
-				(cons (car it) ra)
-				(cons (car it) p)))))
-		    ((eq? (caar terms) 'left)
-		     (let lal ((it (cdar terms))
-			       (r-terms rev-terms)
-			     (la l-assoc)
-			     (p '()))
-		       (if (null? it)
-			   (term-loop (cdr terms) 
-				      r-terms
-				      r-assoc
-				      la
-				      non-assoc
-				      (cons p prec))
-			   (lal (cdr it) 
-				(check-term (car it) r-terms)
-				(cons (car it) la)
-				(cons (car it) p)))))
-		    ((eq? (caar terms) 'non)
-		     (let nal ((it (cdar terms))
-			       (r-terms rev-terms)
-			     (na non-assoc)
-			     (p '()))
-		       (if (null? it)
-			   (term-loop (cdr terms) 
-				r-terms
-				r-assoc
-				l-assoc
-				na
-				(cons p prec))
-			 (nal (cdr it) 
-			      (check-term (car it) r-terms)
-			      (cons (car it) na)
-			      (cons (car it) p))))))
-	     (let loop2 ((lst (cdr grammar)) (rev-nonterm-defs '()))
-	       (if (pair? lst)
-		   (let ((def (car lst)))
-		    (if (not (pair? def))
-			  (error 
-			   "Nonterminal definition must be a non-empty list")
-			  (let ((nonterm (car def)))
-			    (cond ((not (valid-nonterminal? nonterm))
-				   (error "Invalid nonterminal:" nonterm))
-				  ((or (member nonterm rev-terms)
-				       (assoc nonterm rev-nonterm-defs))
-				   (error "Nonterminal previously defined:" 
-					  nonterm))
-				  (else
-				   (begin
-					  (loop2 (cdr lst)
-						 (cons def rev-nonterm-defs))))))))
-		   
-		     (let* ((terms (cons eoi (reverse rev-terms)))
-			    (nonterm-defs (reverse rev-nonterm-defs))
-			    (nonterms (cons '*start* (map car nonterm-defs))))
-		       
-		       (if (= (length nonterms) 1)
-			   (error "Grammar must contain at least one nonterminal")
-			  (let ((compiled-nonterminals
-				 (map (lambda (nonterm-def)
-					(rewrite-nonterm-def nonterm-def
-							     terms
-							     nonterms))
-				      (cons `(*start* ((,(cadr nonterms) ,eoi) 
-						       $1))
-					    nonterm-defs))))
-		
-			   (proc terms
-				 nonterms
-				  (map (lambda (x) (cons (caar x) (map cdr x)))
-				       (map (lambda (x) 
-					      (map prod-action:production x))
-					    compiled-nonterminals))
-				  (apply append 
-					 (map (lambda (y)
-						(map (lambda (x) 
-						       (cons (prod-action:production x)
-							     (prod-action:action x)))
-						     y))
-					      compiled-nonterminals))
-				  l-assoc
-				  r-assoc
-				  non-assoc
-				  (reverse prec)
-				  (cons #f
-					(apply append
-					       (map (lambda (x) (map 
-								 prod-action:prec
-								 x))
-						    compiled-nonterminals))))))))))))))
-
-
 (define (rewrite-nonterm-def nonterm-def terms nonterms)
+  (let* ( (No-NT (length nonterms)) 
+	  (encode (lambda (x) 
+		    (let ((PosInNT (list-index (lambda (term)
+						 (equal? x term)) nonterms)))
+		      (if PosInNT
+			  PosInNT
+			  (let ((PosInT (list-index (lambda (term) 
+						      (equal? x term)) terms)))
+			    (if PosInT
+				(+ No-NT PosInT)
+				(error "undefined symbol : " x))))))) )
+     
+    (if (not (pair? (cdr nonterm-def)))
+	(error "At least one production needed for nonterminal" (car nonterm-def))
+	(let ((name (symbol->string (car nonterm-def))))
+	  (let loop1 ((lst (cdr nonterm-def))
+		      (i 1)
+		      (rev-productions-and-actions '()))
+	    (if (not (pair? lst))
+		(reverse rev-productions-and-actions)
+		(let* ((prec (if (equal? (length (car lst)) 3)
+				 (cadaar lst)
+				 #f))
+		       (rhs  (if (equal? (length (car lst)) 3)
+				 (list-ref (car lst) 1)
+				 (caar lst)))
+		       (rest  (cdr lst))
+		       (prod (map encode (cons (car nonterm-def) rhs))))
+		  (for-each (lambda (x)
+			      (if (not (or (member x terms) (member x nonterms)))
+				  (error "Invalid terminal or nonterminal" x)))
+			    rhs)
+		  (loop1 rest
+			 (+ i 1)
+			 (cons
+			  (make-prod-action prod 
+					    (if (equal? (length (car lst)) 3)
+						(list-ref (car lst) 2)
+						(list-ref (car lst) 1))
+					    prec)
+			  rev-productions-and-actions)))))))) )
 
-  (define No-NT (length nonterms))
-
-  (define (encode x) 
-    (let ((PosInNT (pos-in-list x nonterms)))
-      (if PosInNT
-	  PosInNT
-	  (let ((PosInT (pos-in-list x terms)))
-	    (if PosInT
-		(+ No-NT PosInT)
-		(error "undefined symbol : " x))))))
-
-  
-  (if (not (pair? (cdr nonterm-def)))
-      (error "At least one production needed for nonterminal" (car nonterm-def))
-      (let ((name (symbol->string (car nonterm-def))))
-	(let loop1 ((lst (cdr nonterm-def))
-		    (i 1)
-		    (rev-productions-and-actions '()))
-	  (if (not (pair? lst))
-	      (reverse rev-productions-and-actions)
-	      (let* ((prec (if (equal? (length (car lst)) 3)
-			       (cadaar lst)
-			       #f))
-		     (rhs  (if (equal? (length (car lst)) 3)
-				(list-ref (car lst) 1)
-				(caar lst)))
-		     (rest  (cdr lst))
-		     (prod (map encode (cons (car nonterm-def) rhs))))
-		(for-each (lambda (x)
-			    (if (not (or (member x terms) (member x nonterms)))
-				(error "Invalid terminal or nonterminal" x)))
-			  rhs)
-		(loop1 rest
-			   (+ i 1)
-			   (cons
-			    (make-prod-action prod 
-					      (if (equal? (length (car lst)) 3)
-						  (list-ref (car lst) 2)
-						  (list-ref (car lst) 1))
-					      prec)
-			    rev-productions-and-actions))))))))
-			   
-		
-		    
-
-    (define (valid-nonterminal? x)
+(define (valid-nonterminal? x)
   (symbol? x))
 
 (define (valid-terminal? x)
@@ -1510,11 +1367,6 @@
 ;; ---------------------------------------------------------------------- ;;
 ;; Miscellaneous                                                          ;;
 ;; ---------------------------------------------------------------------- ;;
-(define (pos-in-list x lst)
-  (let loop ((lst lst) (i 0))
-    (cond ((not (pair? lst))    #f)
-	  ((equal? (car lst) x) i)
-	  (else                 (loop (cdr lst) (+ i 1))))))
 
 (define (sunion lst1 lst2)		; union of sorted lists
   (let loop ((L1 lst1)
@@ -1543,15 +1395,6 @@
 		 (cons x (loop (cdr l1))))
 		(else 
 		 l1))))))
-
-(define (filter p lst)
-  (let loop ((l lst))
-    (if (null? l)
-	'()
-	(let ((x (car l)) (y (cdr l)))
-	(if (p x)
-	    (cons x (loop y))
-	    (loop y))))))
 
 ;; ---------------------------------------------------------------------- ;;
 ;; Debugging tools ...                                                    ;;
@@ -1587,23 +1430,22 @@
 	       (vector-ref the-terminals (- n nvars))
 	       (vector-ref the-nonterminals n))))
   
-(define (print-states)
-  (define (print-action act)
-    (cond
-     ((eq? act '*error*)
-      (display " : Error"))
-     ((eq? act 'accept)
-      (display " : Accept input"))
-     ((< act 0)
-      (display " : reduce using rule ")
-      (display (- act)))
-     (else
-      (display " : shift and goto state ")
-      (display act)))
-    (newline)
-    #t)
-  
-  (define (print-actions acts)
+(define (print-action act)
+  (cond
+   ((eq? act '*error*)
+    (display " : Error"))
+   ((eq? act 'accept)
+    (display " : Accept input"))
+   ((< act 0)
+    (display " : reduce using rule ")
+    (display (- act)))
+   (else
+    (display " : shift and goto state ")
+    (display act)))
+  (newline)
+  #t)
+
+(define (print-actions acts)
     (let loop ((l acts))
       (if (null? l)
 	  #t
@@ -1617,6 +1459,8 @@
 	      (print-symbol (+ sym nvars))))
 	    (print-action act)
 	    (loop (cdr l))))))
+
+(define (print-states)
   
   (if (not action-table)
       (begin
@@ -1643,14 +1487,14 @@
 		(newline)
 		(loop (cdr l))))))))
 
-
-(define (lookup-precedence x)
+(define (lookup-precedence prec x)
   (let loop ((i 0))
-    (if (>= i (length precedence))
+    (if (>= i (length prec))
 	#f
-	(if (member x (list-ref precedence i))
+	(if (member x (list-ref prec i))
 	    i
 	    (loop (+ 1 i))))))
+
 (define (calculate-precedence)
   (let loop ((x 1))
     (if (< x nrules)
@@ -1658,19 +1502,19 @@
 	    (loop (+ x 1))
 	    (begin
 	      (vector-set! rule-preced 
-			  x
-			  (let iloop ((i (vector-ref rrhs x))
-				      (psf #f))
-			    (let ((t (vector-ref ritem i)))
-			    
-			      (cond ((< t -1)
-				   psf)
-				    ((< t nvars)    ; a non-terminal
-				     (iloop (+ 1 i) psf))
-				    (else
-				     (iloop (+ 1 i) 
-					    (vector-ref 
-					     the-terminals
-					     (- t nvars))))))))
+			   x
+			   (let iloop ((i (vector-ref rrhs x))
+				       (psf #f))
+			     (let ((t (vector-ref ritem i)))
+			       
+			       (cond ((< t -1)
+				      psf)
+				     ((< t nvars)    ; a non-terminal
+				      (iloop (+ 1 i) psf))
+				     (else
+				      (iloop (+ 1 i) 
+					     (vector-ref 
+					      the-terminals
+					      (- t nvars))))))))
 	      (loop (+ x 1)))))))
-	  
+
