@@ -293,7 +293,6 @@
 (define maxrhs          #f)
 (define ngotos          #f)
 (define token-set-size  #f)
-(define rule-preced     #f)
 (define grammar #f)
 (define global-terms #f)
 
@@ -346,8 +345,7 @@
   (set! token-set-size  #f))
 
 (define (do-things terms vars gram gram/actions la ra na prec rprec)
-  
-  (set! rule-preced (list->vector rprec))
+  (display gram/actions)
   (set! the-terminals (list->vector terms))
   (set! the-nonterminals (list->vector vars))
   (set! nterms (length terms))
@@ -355,18 +353,19 @@
   (set! nsyms  (+ nterms nvars))
   (set! global-terms terms)
 
-  (let ( (no-of-rules (length gram/actions))
+  (let ( (rule-preced (list->vector rprec)) 
+	 (no-of-rules (length gram/actions))
 	 (no-of-items (let loop ((l gram/actions) (count 0))
 			(if (null? l) 
 			    count
-			    (loop (cdr l) (+ count (length (caar l))))))))
+			    (loop (cdr l) (+ count (length (caar l))))))) )
     (pack-grammar no-of-rules no-of-items gram)
-    (calculate-precedence)
+    (calculate-precedence rule-preced)
     (set-derives)
     (set-nullable)
     (generate-states)
     (lalr)
-    (build-tables prec ra na)
+    (build-tables prec ra na rule-preced)
     (compact-action-table) ) )
 
 (define (check-term term rv)
@@ -426,30 +425,33 @@
 					    l-assoc
 					    (append ass non-assoc)
 					    (cons p prec)) )
-			       (else (error "Associativity unknown:" (caar terms))) )))
+			       (else (error "Associativity unknown:" 
+					    (caar terms))) )))
 	    (begin 
-	     
-	      (any (lambda (rule) 
-		     (if (not (pair? rule))
-			 (error "Nonterminal definition must be a non-empty list")
-			 (cond ((not (valid-nonterminal? (car rule)))
-				(error "Invalid nonterminal:" (car rule)))
-			       ((member (car rule) rev-terms)
-				(error "Nonterminal previously defined:" (car rule))) )))
+	      
+	      (any (lambda (r) 
+		     (if (not (pair? r))
+			 (error "Rule must be a non-empty list")
+			 (cond ((not (valid-nonterminal? (car r)))
+				(error "Invalid nonterminal:" (car r)))
+			       ((member (car r) rev-terms)
+				(error "Nonterminal previously defined:" 
+				       (car r))) )))
 		   rules)
-	     
+	      
 	      (let* ( (terms (cons eoi (reverse rev-terms)))
-		      (nonterms (if (null? rules) 
-				    (error "Grammar must contain at least one nonterminal")
-				    (cons '*start* 
-					  (fold-right 
-					   (lambda (rule nts)
-					     (if (member (car rule) nts) 
-						 (error "Nonterminal previously defined:"
-							(car rule))
-						 (cons (car rule) nts)))
-					   '()
-					   rules))) )		    
+		      (nonterms 
+		       (if (null? rules) 
+			   (error "Grammar must contain at least one nonterminal")
+			   (cons '*start* 
+				 (fold-right 
+				  (lambda (rule nts)
+				    (if (member (car rule) nts) 
+					(error "Nonterminal previously defined:"
+					       (car rule))
+					(cons (car rule) nts)))
+				  '()
+				  rules))))		    
 		      (compiled-nonterminals
 		       (map (lambda (rule)
 			      (rewrite-nonterm-def rule
@@ -506,7 +508,7 @@
 			  (loop2 (cdr prods) (+ it-no3 1) (+ rl-no2 1)))
 			(begin
 			  (vector-set! ritem it-no3 (car rhs))
-			  (loop3 (cdr rhs) (+ it-no3 1))))))))))))
+			  (loop3 (cdr rhs) (+ it-no3 1))))))))))) )
 
 ;; Fonction set-derives
 ;; --------------------
@@ -1186,7 +1188,7 @@
 	    (loop (+ i 1)))))) )
 
 ;; --
-(define (build-tables prec right-assoc non-assoc)
+(define (build-tables prec right-assoc non-assoc rule-preced)
   (define (add-action St Sym Act)
     (let* ((x (vector-ref action-table St))
 	   (y (assv Sym x)))
@@ -1495,7 +1497,7 @@
 	    i
 	    (loop (+ 1 i))))))
 
-(define (calculate-precedence)
+(define (calculate-precedence rule-preced)
   (let loop ((x 1))
     (if (< x nrules)
 	(if (vector-ref rule-preced x)

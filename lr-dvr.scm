@@ -31,7 +31,7 @@
 	 (new-state (cdr (assq new-cat (vector-ref goto-table state))))
 	 (new-sp    (+ sp 2)))
     (if (>= new-sp max-stack-size)
-	(errorp "PARSE ERROR : stack overflow")
+	(error "PARSE ERROR : stack overflow")
 	(begin
 	  (vector-set! stack new-sp new-state)
 	  (vector-set! stack (- new-sp 1) lval)
