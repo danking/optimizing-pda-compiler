@@ -1,6 +1,6 @@
-(define-structure lalr (export )
-  (open scheme-level-2
-	defrec-package
-        signals        ; to get error
-        formats)       ; to get format
+(define-structure lalr (export gen-lalr1) 
+ (open list-lib
+       string-lib
+       scheme-with-scsh
+       defrec-package)
   (files lalr))
