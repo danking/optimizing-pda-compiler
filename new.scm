@@ -1,6 +1,6 @@
-;;;
-; Input Type Definition
-;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;                            Input Type Definition                             ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ; The LALR(1) Table Constructor takes one of these records as input
 (define-record cfg
@@ -53,9 +53,9 @@
   ; it will appear in the output unmodified.
   action)
 
-;;;
-; Output Type Definition
-;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;                            Output Type Definition                            ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ; The LALR(1) table constructor returns this as its output
 (define-record LR-program
@@ -98,9 +98,9 @@
   ; the LALR(1) Table constructor.
   action)
 
-;;;
-; Internal Type Definitions
-;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;                                Internal Types                                ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ; A single instance of this record is created every time a new parser is
 ; constructed.  It starts out mostly empty and it is passed from function to
@@ -147,11 +147,12 @@
   ; Would appear as:
   ; rule-lhs = #( #f S A B B )
   ; rule-rhs = #( #f 0 3 7 8 )
-  ; rule-items = #( A B -1 a b c -2 -3 ( B ) -4 )
+  ; rule-items = #( A B -1 a b c -2 -3 ( B ) -4 #f )
   ;
   ; Note that symbols were used for clarity.  In reality, the symbols would be
   ; replaced by their corresponding numbers.  Also note that the first element
-  ; of 'rule-lhs and 'rule-rhs is not used because 0 is not negative.
+  ; of 'rule-lhs and 'rule-rhs is not used because 0 is not negative and that
+  ; the last element of 'rule-items is always #f.
   ;
   ; This representation is used because it makes constructing the LR(0) parser
   ; fast and easy.  Items are simply indexes into 'rule-items and states are
@@ -162,11 +163,9 @@
   (rule-rhs #f)
   (rule-items #f)
 
-  ; This is where each element corresponds to a terminal symbol (it has size:
-  ; (- (vector-length symbols) num-nonterminals)).  The values are precedence
-  ; numbers (indexes into 'associativity-map).  The vector maps terminal symbols
-  ; to their corresponding precedence.  Higher numbers have higher precedence.
-  ; Terminal symbols with no precedence are assigned the number 0.
+  ; This vector maps terminal symbols to their corresponding precedence number.
+  ; Higher numbers have higher precedence.  Terminal symbols with no defined
+  ; precedence are assigned the number 0.
   (precedence-map #f)
 
   ; This vector maps precedence numbers to the corresponding associativity for
@@ -190,7 +189,7 @@
   ; numbers.  Its purpose is to make 'compute-closure fast.
   ;
   ; The values are the result of unioning the 'derives sets for every
-  ; non-terminal in "this" non-terminal's First set.  The code comments for
+  ; non-terminal in the given non-terminal's First set.  The code comments for
   ; 'compute-firsts give the best description of what the First set is.
   (first-derives #f)
 
@@ -199,9 +198,9 @@
   ; which cannot.
   (nullable #f)
 
-  ; This is a vector containing the states in the LR(0) parser.  The first state
-  ; is in the first slot.  See the description of the state-record for more
-  ; information.
+  ; This is a vector containing 'state records.  It represents the states in the
+  ; LR(0) parser.  The starting state is in index 0.  See the description of the
+  ; 'state record for more information.
   (states #f)
 
   ; This vector is the same size as 'states.  Its values are #t or #f.  It marks
@@ -216,18 +215,20 @@
   ; the sum for all the states.
   ;
   ; The purpose of the vector is to serve as an index into 'reduction-rule-num,
-  ; 'lookback, and 'LA.  If a state is inconsistent, then this vector maps the
-  ; index into those vectors where the data for said state starts.
+  ; 'lookback, and 'LA.  If a state is inconsistent, then this vector maps a
+  ; a state to the index into those vectors where the data for that state
+  ; starts.
   (reduction-map #f)
 
-  ; This vector is the same size as the last element in 'reduciton-map (which
+  ; This vector is the same size as the last element in 'reduction-map (which
   ; could be 0).  It contains, in order of state number, the rule numbers of
   ; reductions that take place in inconsistent states.
   (reduction-rule-num #f)
 
   ; This vector is the same size as 'reduction-rule-num.  It maps a reduction to
   ; the list of non-terminal transitions that "this" reduction can immediately
-  ; cause.
+  ; cause.  See the LALR analysis description in the comments for
+  ; 'construct-lalr-parser.
   (lookback #f)
 
   ; This vector is the same size as 'reduction-rule-num.  Its values are bitsets
@@ -253,20 +254,24 @@
   (from-state #f)
   (to-state #f)
 
-  ;
+  ; Both these vectors are the same size as 'from-state & 'to-state and both map
+  ; a non-terminal transition to a list of non-terminal transitions.  These
+  ; vectors define the relationships of the same name that are described in the
+  ; in the LALR analysis overview.  See the comments for 'construct-lalr-parser.
   (reads #f)
   (includes #f)
 
-  ;
+  ; This vector is the same size as 'from-state & 'to-state and maps
+  ; non-terminal transitions to the list of terminal symbols that can be shifted
+  ; after it.  See the comments for 'construct-lalr-parser.
   (follow #f)
 
   ; This is the action table that goes into the LR-automaton.  It is generated
   ; seperately because conflict resolution has to be dealt with when
   ; constructing it.
-  (action-table #f)
-  )
+  (action-table #f))
 
-;;; States, Shifts, and Reductions
+; This record defines an individual state in the LR(0) state machine.
 (define-record state
 
   ; This is a number unique to the state.  It is the same number as its index in
@@ -291,8 +296,12 @@
   ; represents which rules can be reduced by in this state.
   (reductions #f))
 
-;;; Sets
-; Sets are represented by sorted lists.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;                                 Utility Code                                 ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; ----------------------------------- Sets ----------------------------------- ;
+; Sets are represented as sorted lists
 
 ; This function adds 'element to 'set
 (define (set-insert element set)
@@ -312,8 +321,8 @@
 		      ((< a b) (cons a (set-union (cdr set1) set2)))
 		      (else (set-union (cdr set1) set2)))))))
 
-;;; Bit-Sets
-; Bit-Sets are represented as integers because Scheme has infinite precision
+; --------------------------------- Bit-Sets --------------------------------- ;
+; Bit-Sets are simply integers.
 
 ; Computes the union of two bit-sets
 (define bit-union bitwise-ior)
@@ -322,7 +331,8 @@
 (define (set-bit bitset i)
   (bit-union bitset (expt 2 i)))
 
-;;; Vector Manipulation Functions
+; --------------------------------- Vectors ---------------------------------- ;
+
 (define (vector-copy vector . size)
   (let* ((size (if (null? size) (vector-length vector) (car size)))
 	 (result (make-vector size)))
@@ -333,42 +343,102 @@
 	    (loop (+ i 1)))
 	  result))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;                              The Main Algorithm                              ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;;;
-; Code
-;;;
-
-(define (test)
-  (eval '(create-lalr-parser tiger-grammar) (interaction-environment)))
-
-; - DR = One terminal-bitset for every non-terminal transistion.  Gives the list
-;   of terminal symbols that may appear immediately after a non-terminal
-;   with no nullable non-terminals shifted in-between (for that, see Read).
-; - reads - One list of non-terminal transisions for every non-terminal
-;   transision.  For every non-terminal transision, it gives the list of
-;   nullable non-terminal transisions that can be made immediately after it.
-; - Read = Read(p,A) = DR(p,A) u U{Read(r,C)|(p,A) reads (r,C)}
-; - includes = One list of non-terminal transisions for every non-terminal
-;   transision.  Basically, if "A -> B C D", and 'D' is nullable, then the
-;   Follow set of both 'C' and 'D' "includes" the follow set of 'A'.
-; - Follow = Follow(p,A) = Read(p,A) u U{Follow(p',B)|(p,A) includes (p',B)}
-;   This contains one terminal-bitset for every non-terminal transision.  It
-;   gives every terminal symbol that can appear on the input string immediately
-;   after a non-terminal transision.
-; - lookback = One list of non-terminal transitions for every inconsistent
-;   reduction.  This maps each reduction to the list of possible non-terminal
-;   shifts that could occur immediately after the reduction takes place
-; - LA = LA(q,A->w) = U{Follow(p,A)|(q,A->w) lookback (p,A)}
-;   The is the goal of the LALR algorithm.  It gives the list of
-;   terminal symbols that can appear on the input string after a reduction takes
-;   place.  In other words, it gives the list of terminal-symbols that should
-;   cause a "reduce" in the engine.
+; This is the top-level function for the PDA generation algorithm.  It takes
+; either one or two arguments.  The first argument is a 'cfg record that defines
+; the Context-Free Grammar to convert.  The second, optional argument is a place
+; to write the state table.  This may take many forms.  If it is a string, it
+; will be interpreted as a filename and the state-table will be written to that
+; file.  If it is a port, the state-table will be written to that port.  If it
+; is '#t, the state-table will be written to the value of (current-output-port).
+; If it is '#f or not given, the state table will not be written.
 ;
-; - consistent = tells which states are consistent
-; - reduction-map = maps a state to the start of its information in LAruleno,
-;   lookback, and LA
-; - reduction-rule-num = lists the rules that are reduced by in each
-;   inconsistent state
+; It returns an 'LR-program record that represents the LALR(1) parser.
+;
+;
+; --- WHERE TO FIND MORE INFORMATION
+;
+; The comments in this file assume that you are familiar with general LR
+; parsing.  If not, a good introduction can be found in the "Dragon Book" here:
+;
+;     <citation for Dragon Book>
+;
+; This function generations a LALR(1) state table.  It uses an efficient
+; algorithm that is described fully in:
+;
+;     "Efficient Computation of LALR(1) Look-Ahead Sets", F. DeRemer and
+;     T. Pennello, TOPLAS, vol. 4, no. 4, october 1982.
+;
+;
+; --- A SHORT DESCRIPTION OF THE LALR ALGORITHM
+;
+; Note: In the follow description, 'u' denotes "union" and 'U', when applied to
+; a set of sets, denotes the result of unioning all internal sets.  'p' and 'q'
+; are states in the LR(0) state machine.  'A', 'B', 'C', and 'D' are
+; non-terminal symbols.  'w' represents a possibly empty string of terminal and
+; non-terminal symbols.  A->w denotes a reduction.
+;
+; The final result of the LALR analysis is LA.  This is a list of terminals for
+; every reduction in the LR(0) state machine.  This tells the table constructor
+; which look-ahead tokens should have the corresponding "reduce" action.  LA is
+; represented internally as a bitset with one bit for every terminal symbol.
+;
+; LA(q,A->w) = U( Follow(p,A) | (q,A->w) lookback (p,A) )
+;
+; lookback is mapping from reductions in the LR(0) state machine to a list of
+; non-terminal transitions ("gotos") that could happen immediately after each
+; reduction.
+;
+; Follow is a list of terminal symbols for every non-terminal transition in the
+; LR(0) state machine.  It gives the list of terminal symbols that can appear
+; on the input string immediately after each nonterminal transition in a valid
+; grammar.
+;
+; Thus, the problem of computing LA is reduced to the problem of computing
+; follow sets for the "gotos" in the grammar.
+;
+; Follow(p,A) = Read(p,A) u U{ Follow(p',B) | (p,A) includes (p',B) }
+; Read(p,A)   = DR(p,A)   u U{ Read(r,C)    | (p,A) reads    (r,C)  }
+;
+; Note that these definitions are recursive and very similar.
+;
+; includes is a mapping from non-terminal transitions to a list of non-terminal
+; transitions.  This relation takes care of the fact that if there is a rule
+; A -> B C D, and 'D' is nullable, then the follow sets of both 'C' and 'D'
+; "include" whatever is in the follow set of 'A'.
+;
+; reads is another mapping from non-terminal transitions to a list of
+; non-terminal transitions.  This relation takes care of the fact that if
+; "A B C D" appears on the right side of a rule, and 'B' and 'C' are nullable,
+; then the follow set for 'B' includes the follow set of 'C' and the follow set
+; of 'A' includes the follow set of 'B'.
+;
+; DR ("Direct Read") is a list of terminal symbols for every non-terminal
+; trasition.  It tells which terminal symbols can be shifted immediately after
+; a non-terminal transition.  This is just the list of which terminal symbols
+; have a "shift" action defined in the "to state" of the transition.
+;
+; Now we have a way to compute Follow sets (and thus LA sets) from simple
+; properties of the grammar and the LR(0) state machine.  We just need a way to
+; deal with the recursive definition of Read and Follow.  The paper defines a
+; fuction called "digraph" which takes care of this.  It finds
+; Strongly Connected Components (a maximal set of verticies where there is a
+; path from any vertex to any other vertex in the set) in the graph definef by
+; the includes and reads relations and treats them as single nodes.  After that,
+; the graph becomes a tree and information simply propogates up the tree.
+;
+; QUALIFICATION
+; The paper computes LA for every reduction in the grammar.  This algorithm only
+; computes LA for "inconsistent" states.  Inconsistent states are states in
+; which there is more than one reduction or a single reduction and no
+; non-terminal transitions.  For the other reductions, the reduction happens by
+; "default" (that is, for any terminal symbol that does not have any other
+; action defined).  This does not change the grammar any.  Any errors in the
+; input string will be caught in the next state when the PDA finds that no shift
+; is defined for the terminal symbol.
 (define (create-lalr-parser grammar . state_output )
   (let ((lalr-record (convert-grammar grammar)))
     (compute-precedence lalr-record)
@@ -390,7 +460,7 @@
     (print-LR-program state_output lalr-record)
     (construct-LR-program lalr-record)))
 
-;;-
+;-------------------------------------------------------------------------------
 ; This function takes the grammar as it was passed in and converts into the
 ; representations used internal to the parser.  Along the way, it does a lot
 ; of sanity-checking on the grammar.
@@ -642,7 +712,7 @@
 	       (error "Unknown terminal symbol:" prec)))))
     rules))))
 
-;;-
+;-------------------------------------------------------------------------------
 ; This function is responsible for computing the 'rule-precedence field.  The
 ; vector was created in 'convert-grammar where some of the values were set.
 ; These values correspond to rules whose precedence was manually specified and
@@ -674,7 +744,7 @@
 						(- item
 						   num-nonterminals))))))))))))
 
-;;-
+;-------------------------------------------------------------------------------
 ; This function is responsible for computing the 'derives field.  This is a
 ; mapping from a nonterminal symbol to the list of rule-numbers of which it is
 ; on the left-hand-side.
@@ -695,7 +765,7 @@
 	    (loop (+ i 1)))))
     (set-lalr-constructor:derives lalr-record derives)))
 
-;;-
+;-------------------------------------------------------------------------------
 ; This function is responsible for computing the 'nullable field.  This vector
 ; tells whether or not a given non-terminal symbol can derive the empty string.
 ;
@@ -791,7 +861,7 @@
 		      (non-term-loop nulled-non-terms)))
 		(set-lalr-constructor:nullable lalr-record nullable)))))))
 
-;;-
+;-------------------------------------------------------------------------------
 ; This function commputes the 'first-derives field.  This is a vector where each
 ; element corresponds to a non-terminal symbol.  The values are sets that are
 ; the union of the 'derive value for every element in the non-terminal's 'first
@@ -864,12 +934,15 @@
     ; Return the result
     firsts))
 
-;;-
-; This function compute the value of the 'states field.
+;-------------------------------------------------------------------------------
+; This function builds an LR(0) state machine for the grammar.  It starts by
+; putting the start state into the state queue and then it uses 'closure and
+; 'goto until no more states are generated.  The result is store in the 'states
+; field of 'lalr-record.
 (define (compute-LR0-states lalr-record)
   (let* ((num-symbols (vector-length (lalr-constructor:symbols lalr-record)))
 	 (rule-items (lalr-constructor:rule-items lalr-record))
-	 (state-queue (make-vector (vector-length rule-items))) ;<---- This needs to be variable length --- ???
+	 (state-queue (make-vector (vector-length rule-items))) ;<---- This needs to be variable length --- !!!
 	 (item-map ((make-table-maker equal? (lambda (lst) (fold + 0 lst))))))
     (vector-set! state-queue 0 (make-state 0 #f '(0)))
     (table-set! item-map '(0) (vector-ref state-queue 0))
@@ -904,7 +977,10 @@
 	  (set-lalr-constructor:states lalr-record
 				       (vector-copy state-queue last-state))))))
 
-; This function computes the "closure" operation on a set of items.
+; This function takes a list of "kernel" items from 'state and returns the
+; complete list of items that represent that state.  The new items will all have
+; the dot at the front of the rule.  For example, if the parser can be in the
+; state "A -> a B c . D" then it can also be in the state "D -> . f G".
 (define (compute-closure state lalr-record)
   (let ((num-nonterminals (lalr-constructor:num-nonterminals lalr-record))
 	(rule-rhs (lalr-constructor:rule-rhs lalr-record))
@@ -925,7 +1001,10 @@
 		(item-loop (cdr items) closure-set)))
 	  closure-set))))
 
-; This is the "Goto" operation when constructing an LR(0) parser
+; This function takes a list of items (which represent a state) and returns a
+; vector.  The vector is indexed by terminal and non-terminal symbols and the
+; values are new lists of items.  These represent (possibly new) states which
+; can be reached by shifting the corresponding symbol.
 (define (compute-goto items num-symbols rule-items)
   (let ((next (make-vector num-symbols '())))
     (let loop ((items items))
@@ -943,7 +1022,8 @@
 	    (loop (+ i 1)))))
     next))
 
-; This function computes the 'reductions field of 'state
+; This fuction figures out which reductions are possible in the given state and
+; then saves them in the state record.
 (define (save-reductions state items rule-items)
   (set-state:reductions state
 			(let loop ((items items))
@@ -954,7 +1034,7 @@
 				    (cons (- item) (loop (cdr items)))
 				    (loop (cdr items))))))))
 
-;;-
+;-------------------------------------------------------------------------------
 ; This function computes the 'consistent and 'reduction-map fields.
 (define  (compute-consistent-and-reduction-map lalr-record)
   (let* ((num-nonterminals (lalr-constructor:num-nonterminals lalr-record))
@@ -982,7 +1062,7 @@
     (set-lalr-constructor:consistent lalr-record consistent)
     (set-lalr-constructor:reduction-map lalr-record reduction-map)))
 
-;;-
+;-------------------------------------------------------------------------------
 ; This function computes the 'reduction-rule-num field.
 (define (compute-reduction-rule-num lalr-record)
   (let* ((states (lalr-constructor:states lalr-record))
@@ -1008,14 +1088,20 @@
 		      (rule-loop (cdr reductions) (+ rule-count 1))))))))
     (set-lalr-constructor:reduction-rule-num lalr-record reduction-rule-num)))
 
-;;-
-; This function computes the 'goto-map, 'from-state, and 'to-state fields
+;-------------------------------------------------------------------------------
+; This function computes the 'goto-map, 'from-state, and 'to-state fields.
+; Basically, it enumerates all the non-terminal transitions ("gotos") in the
+; LR(0) state machine.  'from-state & 'to-state are the numbers of the starting
+; and destination state for each transition.  All the non-terminal transitions
+; are listed together.  'goto-map maps a given non-terminal to the starting
+; point in 'from-state & 'to-state for that non-terminal.
 (define (compute-goto-map lalr-record)
   (let* ((num-nonterminals (lalr-constructor:num-nonterminals lalr-record))
 	 (states (lalr-constructor:states lalr-record))
 	 (num-states (vector-length states))
 	 (goto-map (make-vector (+ num-nonterminals 1) 0)))
 
+    ; Calculate the number of "gotos" each non-terminal is involved in
     (let state-loop ((state-num 0) (num-gotos 0))
       (if (< state-num num-states)
 	  (let shift-loop ((shift-states (state:shifts (vector-ref states
@@ -1031,6 +1117,7 @@
 			(shift-loop (cdr shift-states) (+ num-gotos 1)))
 		      (shift-loop (cdr shift-states) num-gotos)))))))
 
+    ; Covert the individual sums into indexes into 'from-state and 'to-state
     (let sum-loop ((i 0) (sum 0))
       (if (< i num-nonterminals)
 	  (let ((x (vector-ref goto-map i)))
@@ -1038,6 +1125,7 @@
 	    (sum-loop (+ i 1) (+ sum x)))
 	  (vector-set! goto-map num-nonterminals sum)))
 
+    ; Compute 'from-state and 'to-state
     (let* ((temp-map (vector-copy goto-map))
 	   (from-state (make-vector (vector-ref temp-map num-nonterminals)))
 	   (to-state (make-vector (vector-length from-state))))
@@ -1056,6 +1144,8 @@
 			  (vector-set! from-state i state-num)
 			  (vector-set! to-state i to-state-num)))
 		    (shift-loop (cdr shift-states)))))))
+
+      ; Finish up
       (set-lalr-constructor:goto-map lalr-record goto-map)
       (set-lalr-constructor:from-state lalr-record from-state)
       (set-lalr-constructor:to-state lalr-record to-state))))
@@ -1079,6 +1169,7 @@
 		  (else
 		   (loop low (- middle 1)))))))))
 
+;-------------------------------------------------------------------------------
 ; This function computes the 'reads field and the DR value.  DR is stored in the
 ; 'follow field where it will serve as the initial value when 'compute-follow is
 ; called.
@@ -1114,7 +1205,7 @@
     (set-lalr-constructor:follow lalr-record DR)
     (set-lalr-constructor:reads lalr-record reads)))
 
-;;-
+;-------------------------------------------------------------------------------
 (define (compute-includes-and-lookback lalr-record)
   (let* ((num-nonterminals (lalr-constructor:num-nonterminals lalr-record))
 	 (rule-rhs (lalr-constructor:rule-rhs lalr-record))
@@ -1196,18 +1287,16 @@
 	    (loop (+ i 1)))))
     includes))
 
-;;-
-; This function finished computing the value of the 'follow field.  This field
-; was initialized by 'compute-DR-and-reads to the value of DR (see the intro
-; comment on LALR lookahead sets).  This function uses the 'digraph function as
+;-------------------------------------------------------------------------------
+; This function finishes computing the value of the 'follow field.  This field
+; was initialized by 'compute-DR-and-reads to the value of DR (see the comment
+; to 'construct-lalr-parser).  This function uses the 'digraph function as
 ; defined in the DeRemer and Pennello paper to compute Read and then Follow.
 (define (compute-follow lalr-record)
   (let ((reads (lalr-constructor:reads lalr-record))
 	(includes (lalr-constructor:includes lalr-record))
 	(follow (lalr-constructor:follow lalr-record)))
     (digraph (digraph follow reads) includes)))
-
-; Note: What do we do about cycles?
 
 ; This is the Digraph function defined in the DeRemer and Pennello paper.  It is
 ; a helper function is 'compute-follow.  The variable names were taken directly
@@ -1250,7 +1339,7 @@
 					      (vector-ref F t)))
 		  (loop (- top 1)))))))))
 
-;;-
+;--------------------------------------------------------------------------------
 ; This function computes the 'LA field.  This is a list of terminal symbmols,
 ; represented as bitsets, for every inconsistent reduction in the grammar.
 ; These are the terminal symbols on which the parsing engine should "reduce" by
@@ -1272,11 +1361,11 @@
 		(reduction-loop (+ red-num 1))))))
     (set-lalr-constructor:LA lalr-record LA)))
 
-;;-
+;-------------------------------------------------------------------------------
 ; This function computes the 'action-table value.  It computes the actions one
 ; state at a time.  It uses the vector 'workspace to temporarily hold actions
 ; until the state has been analyzed.  The vector is one larger than the length
-; of symbols and each element (except the last) corresponds to symbol.  The
+; of symbols and each element (except the last) corresponds to a symbol.  The
 ; values are actions and are either numbers or #f.  Negative numbers are
 ; reductions and are the negated value of the rule number to reduce by.  Other
 ; numbers are shifts (or gotos) and correspond to states.  #f means that no
@@ -1422,7 +1511,7 @@
 		 (else ; non-associative
 		  #f))))))
 
-;;-
+;-------------------------------------------------------------------------------
 ; This is the function that is called after all the major computation has been
 ; done.  It converts everything into a 'LR-program record and then returns it.
 (define (construct-LR-program lalr-record)
@@ -1465,7 +1554,7 @@
 	    (rule-loop (- bottom-item 1)))))
     (make-LR-program terminals eoi rules states)))
 
-;;-
+;-------------------------------------------------------------------------------
 (define (print-LR-program place lalr-record)
   (let ((num-states (vector-length (lalr-constructor:states lalr-record)))
 	(port (cond ((null? place) #f)
