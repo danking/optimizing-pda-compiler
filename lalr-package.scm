@@ -3,4 +3,4 @@
        string-lib
        scheme-with-scsh
        defrec-package)
-  (files lalr))
+  (files lalr examples utils-io))
