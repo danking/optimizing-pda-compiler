@@ -2,26 +2,25 @@ This directory contains a LALR(1) parser written in Scheme.  The following files
 are relevant:
 
 - lalr-package.scm
-    Contains the package declarations for everything.  Look here if you want to
+  Contains the package declarations for everything.  Look here if you want to
   see all the exported macros.
 - lalr.scm
-    This file contains the LALR(1) parser generator algorithm.  This is where
+  This file contains the LALR(1) parser generator algorithm.  This is where
   all of the complex code is.
 - cfg.scm
-    This file defines the CFG->PDA macros.  It is basically a front-end to
+  This file defines the CFG->PDA macros.  It is basically a front-end to
   lalr.scm.  At one point it converted an sexp into a record-based AST format
   but that is now gone.  However, the separations of the files remains.
 - semantic-action.scm
-    This file contains code to covert a CFG with embeded-Scheme semantic actions
+  This file contains code to covert a CFG with embeded-Scheme semantic actions
   to semantic actions that are wrapped in LAMBDAs.  It defines the
   COMPILE-ACTIONS macros.
 - engine.scm
-    This file defines the PDA to Scheme compiler in the form of the PARSE/PDA
+  This file defines the PDA to Scheme compiler in the form of the PARSE/PDA
   macro.
 - macro-glue.scm
-    This file defines a few high-level macros that are very useful.  In fact,
+  This file defines a few high-level macros that are very useful.  In fact,
   these are the ones called in practice.  They combine several steps at once.
-
 
 examples.scm contains a simple calculator that illustrates some of the features
 of this program.  What follows are the steps required to load it:
@@ -40,7 +39,7 @@ of this program.  What follows are the steps required to load it:
   > ,load examples.scm
   examples.scm
 
-In examples.scm, the variable CALCULATOR holds the parser program.  Some sample,
+In examples.scm, the variable CALCULATOR holds the parser program.  Some sample
 uses of this are:
 
   > (calculator '(3 + 5 - 2 * 3))
