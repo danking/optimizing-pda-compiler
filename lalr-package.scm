@@ -1,7 +1,5 @@
 (define-structure lalr
-  (export ; lalr.scm
-	  create-lalr-parser
-
+  (export ; records.scm
 	  make-cfg cfg?
 	  cfg:terminals cfg:eoi cfg:error cfg:start cfg:rules
 	  set-cfg:terminals set-cfg:eoi set-cfg:error set-cfg:start
@@ -31,6 +29,8 @@
 	  LR-state:shift-reduce-table LR-state:goto-table LR-state:items
 	  set-LR-state:shift-reduce-table set-LR-state:goto-table
 	  set-LR-state:items
+	  ; lalr.scm
+	  create-lalr-parser
 	  ; cfg.scm
 	  cfg
 	  ; utilities.scm
@@ -47,4 +47,4 @@
 
   (open list-lib string-lib tables scheme-with-scsh defrec-package)
 
-  (files cfg lalr utilities semantic-action engine examples debug))
+  (files records cfg lalr utilities semantic-action engine examples debug))

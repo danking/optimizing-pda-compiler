@@ -43,7 +43,7 @@
 
     (let state-loop ((state-num 0))
       (if (< state-num (vector-length states))
-	  (let ((state (make-LR-state)))
+	  (let ((state (make-LR-state #f #f #f)))
 	    (set-LR-state:shift-reduce-table
 	     state
 	     (reverse (map (lambda (action)

@@ -1,145 +1,4 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;                            Input Type Definition                             ;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-; The LALR(1) Table Constructor takes one of these records as input
-(define-record cfg
-
-  ; This is a list.  The elements of the list are either Scheme symbols or
-  ; 'cfg-precedence records.  These represent the terminal symbols in the
-  ; grammar. Precedence records appearing earlier have higher precedence than
-  ; those appearing later.  Scheme symbols are terminal symbols with no defined
-  ; precedence.
-  terminals
-
-  ; This is a Scheme symbol which will be returned by the lexer when the end of
-  ; the input has been reached.  It must not appear in either 'terminals or
-  ; 'rules.
-  eoi
-
-  ; This is the error symbol.  This symbol is shifted whenever the Push-Down
-  ; Automaton encounters an error.  It may be used in 'rules but should not
-  ; appear in 'terminals and should never be returned by the lexer.  If the
-  ; error symbols is not used, the value may be #f.
-  error
-
-  ; This is the non-terminal that is the start symbol
-  start
-
-  ; This is a list of rule records
-  rules)
-
-; This is a record used to specify terminal symbols with defined precedence.
-(define-record cfg-precedence
-
-  ; One of (left right non).  This is the associativity of 'terminals.
-  associativity
-
-  ; The list of terminal symbols in this precedence class.
-  terminals)
-
-; This record represents a rule in the grammar
-(define-record cfg-rule
-
-  ; This will be a Scheme symbol that represents the non-terminal symbol on the
-  ; left side of the rule.
-  left-side
-
-  ; This is a list of Scheme symbols represent that symbols on the right side of
-  ; the rule.
-  right-side
-
-  ; This is either a terminal symbol or #f.  If it is a terminal symbol, it is
-  ; the terminal symbol to use as the precedence for this rule.  If it is #f,
-  ; then the precedence for the rule will be the precedence of the last terminal
-  ; symbol in the rule (if any).
-  precedence
-
-  ; This is the semantic action for the rule.  No operations are done on it and
-  ; it will appear in the output unmodified.
-  action)
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;                            Output Type Definition                            ;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-; The LALR(1) table constructor returns this as its output
-(define-record LR-program
-
-  ; This is a list of Scheme symbols and gives the terminal symbols which are
-  ; valid for the lexer to return.
-  terminals
-
-  ; This is the symbol that the lexer should return when it reaches the end of
-  ; the input.
-  eoi
-
-  ; This is the symbol that is shifted when errors are encountered.  If defined,
-  ; in will appear in 'rules and 'states but should never be returned by the
-  ; lexer.  If not defined, this entry will be #f.
-  error
-
-  ; This is a vector of 'lalr-rule records.  Reduction actions in 'states will
-  ; refer to elements of this vector by their index.
-  rules
-
-  ; This is a vector of states.  The start state is state 0.  The values are
-  ; association lists.  The elements of the association lists look like:
-  ; (sym action arg)
-  ; - sym is a Scheme symbol that is either a terminal or non-terminal symbol
-  ; - action is one of 'shift, 'goto (only if 'sym is a non-terminal), 'reduce,
-  ;   or 'accept.
-  ; - arg is a number.  For 'shift and 'goto, it is a state number.  For
-  ;   'reduce, it is an index into 'rules.  It is not present for 'accept.
-  states)
-
-; The LR-program:rules field will contain a vector of these records.
-(define-record LR-rule
-
-  ; This is a Scheme symbol that gives the non-terminal to shift upon a
-  ; reduction by this rule
-  left-side
-
-  ; This is a vector containing the terminal and non-terminal symbols on the
-  ; right side of this rule.  This is primarily used for its length with is the
-  ; number of elements to pop when a reduction by this rule occurs.
-  right-side
-
-  ; This is the action for this rule.  It is unmodified from what was passed
-  ; the LALR(1) Table constructor.
-  action)
-
-; The LR-program:states field will contain a vector of these records.
-(define-record LR-state
-
-  ; This is an association list that contains the shift and reduce actions for
-  ; this particular states.  The items of the list take the form:
-  ;   (terminal action number)
-  ; terminal is the terminal symbol of lookahead on which the action should
-  ; take place.  action is either 'shift, 'reduce, or 'accept.  number is either
-  ; a state number, a rule number, or not present, depending on action.
-  ; Additionally, terminal may be #f to denote a "default" action.  This action,
-  ; which should always be 'reduce if it is defined, will take place if no other
-  ; terminal matches the lookahead symbol.
-  (shift-reduce-table #f)
-
-  ; This is an association list which contains the gotos for this state.  The
-  ; items of this list take the form of:
-  ;   (non-terminal state-number)
-  ; non-terminal is the non-terminal symbol on which this goto takes place.
-  ; state-number is the state-number to shift into.
-  (goto-table #f)
-
-  ; This list encodes the items which make up this state.  This list is used for
-  ; debugging the parser.  The items are in the format of
-  ;   (rule-number dot-index)
-  ; rule-number is an index into 'rules.  dot-number is the index into
-  ; LR-rule:right-side before which the "dot" occurs.  Note that rule-number may
-  ; appear multiple times and dot-index will not be a valid 'right-side index
-  ; if the dot appears at the end of the rule.
-  (items #f))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;                                Internal Types                                ;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -325,7 +184,7 @@
 (define-record state
 
   ; This is a number unique to the state.  It is the same number as its index in
-  ; the 'states vector.
+  ; the 'lalr-constructor:states vector.
   number
 
   ; This is the symbol that was shifted just prior to arriving in this state
@@ -396,16 +255,9 @@
 ;                              The Main Algorithm                              ;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-; This is the top-level function for the PDA generation algorithm.  It takes
-; either one or two arguments.  The first argument is a 'cfg record that defines
-; the Context-Free Grammar to convert.  The second, optional argument is a place
-; to write the state table.  This may take many forms.  If it is a string, it
-; will be interpreted as a filename and the state-table will be written to that
-; file.  If it is a port, the state-table will be written to that port.  If it
-; is '#t, the state-table will be written to the value of (current-output-port).
-; If it is '#f or not given, the state table will not be written.
-;
-; It returns an 'LR-program record that represents the LALR(1) parser.
+; This is the top-level function for the PDA generation algorithm.  It takes a
+; 'cfg record (which represents a Context-Free Grammar) as input and returns a
+; 'LR-program record (which contains the PDA state-table) as output.
 ;
 ;
 ; --- WHERE TO FIND MORE INFORMATION
@@ -1263,69 +1115,107 @@
     (set-lalr-constructor:reads lalr-record reads)))
 
 ;-------------------------------------------------------------------------------
+; This function computes the 'includes and 'lookback fields.  It does this by
+; looping over every non-terminal transition and over every rule that the given
+; non-terminal is involved in.  'lookback is computed by iterating to the end of
+; the rule and making a connection between the state at the rule's end and the
+; state at the beginning.  'includes is computed by working backward from the
+; end of each rule and making a link between the original goto and the rule's
+; symbols as long the symbols remain nullable.
+;
+; Note: The definition of 'includes is that if there are rules:
+; A -> ... B
+; A -> ... C
+; then the relation should map B -> A and C -> A.  This algorithm computing this
+; backward.  It maps A -> (B C).  When the mapping is completed, the function
+; 'transpose is called to put things in the correct order.
 (define (compute-includes-and-lookback lalr-record)
-  (let* ((num-nonterminals (lalr-constructor:num-nonterminals lalr-record))
-	 (rule-rhs (lalr-constructor:rule-rhs lalr-record))
-	 (rule-items (lalr-constructor:rule-items lalr-record))
-	 (derives (lalr-constructor:derives lalr-record))
-	 (nullable (lalr-constructor:nullable lalr-record))
+  (let* ((derives (lalr-constructor:derives lalr-record))
 	 (states (lalr-constructor:states lalr-record))
-	 (consistent (lalr-constructor:consistent lalr-record))
 	 (to-state (lalr-constructor:to-state lalr-record))
-	 (from-state (lalr-constructor:from-state lalr-record))
 	 (num-gotos (vector-length to-state))
-	 (reduction-map (lalr-constructor:reduction-map lalr-record))
 	 (reduction-rule-num (lalr-constructor:reduction-rule-num lalr-record))
 	 (includes-tp (make-vector num-gotos))
 	 (lookback (make-vector (vector-length reduction-rule-num) '())))
     (let goto-loop ((goto-num 0))
       (if (< goto-num num-gotos)
-	  (let ((state-num1 (vector-ref from-state goto-num))
-		(symbol1 (state:access-symbol (vector-ref states (vector-ref to-state goto-num)))))
-	    (let rule-loop ((rules (vector-ref derives symbol1))
-			    (edges '()))
-	      (if (pair? rules)
-		  (let forward-loop ((item-num (vector-ref rule-rhs (car rules)))
-				     (state (vector-ref states state-num1))
-				     (state-nums (list state-num1)))
-		    (let ((symbol (vector-ref rule-items item-num)))
-		      (if (> symbol 0) ;<--------------------------- the start-symbol can be 0 --- ???
-			  (let state-loop ((shifts (state:shifts state)))
-			    (cond ((null? shifts)
-				   (error "Internal Error: Could not find shift symbol.")) ;<------------- ???
-				  ((= (state:access-symbol (car shifts)) symbol)
-				   (forward-loop (+ item-num 1) (car shifts) (cons (state:number (car shifts)) state-nums)))
-				  (else
-				   (state-loop (cdr shifts)))))
-			  (begin
-			    (if (not (vector-ref consistent (state:number state)))
-				(let ((max (vector-ref reduction-map (+ (state:number state) 1))))
-				  (let reduction-loop ((red-num (vector-ref reduction-map (state:number state))))
-				    (cond ((>= red-num max)
-					   (error "Internal Error: Could not find reduction number."))
-					  ((= (vector-ref reduction-rule-num red-num) (car rules))
-					   (vector-set! lookback red-num (cons goto-num (vector-ref lookback red-num))))
-					  (else
-					   (reduction-loop (+ red-num 1)))))))
-			    (let reverse-loop ((done #f)
-					       (state-nums (cdr state-nums))
-					       (item-num (- item-num 1))
-					       (edges edges))
-			      (if done
-				  (rule-loop (cdr rules) edges)
-				  (let ((symbol (vector-ref rule-items item-num)))
-				    (if (< -1 symbol num-nonterminals)
-					(reverse-loop (not (vector-ref nullable symbol))
-						      (cdr state-nums)
-						      (- item-num 1)
-						      (cons (map-goto (car state-nums) symbol lalr-record) edges))
-					(reverse-loop #t state-nums item-num edges)))))))))
-		  (vector-set! includes-tp goto-num edges)))
-	    (goto-loop (+ goto-num 1)))))
+	  (let rule-loop ((rules
+			   (vector-ref derives
+				       (state:access-symbol
+					(vector-ref states
+						    (vector-ref to-state
+								goto-num)))))
+			  (edges '()))
+	    (if (pair? rules)
+		(rule-loop (cdr rules)
+			   (analyze-rule (car rules) goto-num edges
+					 lookback lalr-record))
+		(begin
+		  (vector-set! includes-tp goto-num edges)
+		  (goto-loop (+ goto-num 1)))))))
     (set-lalr-constructor:lookback lalr-record lookback)
     (set-lalr-constructor:includes lalr-record (transpose includes-tp))))
 
-;
+; This is a helper function used by 'compute-includes-and-lookback.  It works on
+; an individual rule.  It does two things.  The first is that it adds entries to
+; 'lookback as necessary.  The second is that it computes what edges need to be
+; added to the includes relation for the given 'goto-num and 'rule-num.
+(define (analyze-rule rule-num goto-num edges lookback lalr-record)
+  (let* ((num-nonterminals (lalr-constructor:num-nonterminals lalr-record))
+	 (rule-rhs (lalr-constructor:rule-rhs lalr-record))
+	 (rule-items (lalr-constructor:rule-items lalr-record))
+	 (states (lalr-constructor:states lalr-record))
+	 (nullable (lalr-constructor:nullable lalr-record))
+	 (consistent (lalr-constructor:consistent lalr-record))
+	 (reduction-map (lalr-constructor:reduction-map lalr-record))
+	 (reduction-rule-num (lalr-constructor:reduction-rule-num lalr-record))
+	 (from-state (lalr-constructor:from-state lalr-record))
+	 (state-num1 (vector-ref from-state goto-num)))
+    (let forward-loop ((item-num (vector-ref rule-rhs rule-num))
+		       (state (vector-ref states state-num1))
+		       (state-nums (list state-num1)))
+      (let ((symbol (vector-ref rule-items item-num)))
+	(if (>= symbol 0)
+	    (let state-loop ((shifts (state:shifts state)))
+	      (cond ((null? shifts)
+		     (error "Internal Error: Could not find shift symbol."))
+		    ((= (state:access-symbol (car shifts)) symbol)
+		     (forward-loop (+ item-num 1) (car shifts)
+				   (cons (state:number (car shifts))
+					 state-nums)))
+		    (else
+		     (state-loop (cdr shifts)))))
+	    (begin
+	      (if (not (vector-ref consistent (state:number state)))
+		  (let ((max (vector-ref reduction-map
+					 (+ (state:number state) 1))))
+		    (let red-loop ((red-num (vector-ref reduction-map
+							(state:number state))))
+		      (cond ((>= red-num max) (error
+			    "Internal Error: Could not find reduction number."))
+			    ((= (vector-ref reduction-rule-num red-num)
+				rule-num)
+			     (vector-set! lookback red-num
+					  (cons goto-num (vector-ref lookback
+								     red-num))))
+			    (else
+			     (red-loop (+ red-num 1)))))))
+	      (let reverse-loop ((done #f) (state-nums (cdr state-nums))
+				 (item-num (- item-num 1)) (edges edges))
+		(if done
+		    edges
+		    (let ((symbol (vector-ref rule-items item-num)))
+		      (if (< -1 symbol num-nonterminals)
+			  (reverse-loop (not (vector-ref nullable symbol))
+					(cdr state-nums)
+					(- item-num 1)
+					(cons (map-goto (car state-nums) symbol
+							lalr-record)
+					      edges))
+			  (reverse-loop #t state-nums item-num edges)))))))))))
+
+; This is a helper function used by 'compute-includes-and-lookback.  It reverses
+; the mapping of 'includes-tp as described in the comments for that function.
 (define (transpose includes-tp)
   (let* ((num-gotos (vector-length includes-tp))
 	 (includes (make-vector num-gotos '())))
@@ -1335,7 +1225,9 @@
 	    (if (null? inner-gotos)
 		(outer-loop (+ outer-goto-num 1))
 		(let ((inner-goto-num (car inner-gotos)))
-		  (vector-set! includes inner-goto-num (cons outer-goto-num (vector-ref includes inner-goto-num)))
+		  (vector-set! includes inner-goto-num
+			       (cons outer-goto-num (vector-ref includes
+								inner-goto-num)))
 		  (inner-loop (cdr inner-gotos)))))))
     includes))
 
@@ -1426,13 +1318,10 @@
 ; #f meaning the action is Error.  Sometimes, however, the default action is to
 ; Reduce.
 ;
-; The values of the resulting association list will look like: (sym action arg)
-; where sym is the Scheme symbol representation of a terminal or non-terminal
-; symbol, action is one of '(shift goto reduce accept), and arg will be a rule
-; number (for 'reduce), a state number (for 'shift or 'goto), or not present
-; (for 'accept).  Additionally, the rule number will be one less than the rule
-; number used internally.  This is to adjust for the fact that there is no
-; internal rule 0.
+; For a detailed description of the output, see the comments for
+; 'LR-state:shift-reduce-table in records.scm.  Also note that all the rule
+; numbers are reduced by one in the final output.  This is because there is no
+; internal rule 0 but there will be in the output record.
 (define (compute-action-table lalr-record)
   (let* ((symbols (lalr-constructor:symbols lalr-record))
 	 (num-symbols (vector-length symbols))
@@ -1451,7 +1340,7 @@
       (if (< state-num num-states)
 	  (let* ((state (vector-ref states state-num))
 		 (reductions (state:reductions state))
-		 (LR-state (make-LR-state)))
+		 (LR-state (make-LR-state #f #f #f)))
 	    ; Start by clearing the workspace
 	    (vector-fill! workspace #f)
 
