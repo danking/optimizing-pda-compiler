@@ -35,9 +35,11 @@
 
 (define-syntax cfg
   (syntax-rules (prec)
-    ((cfg terminals productions ...)
+    ((cfg terminals (start whatever ...) rest ...)
      (make-cfg (cfg-terminals () terminals)
-	       (cfg-rules () (productions ...))))))
+	       '*EOI*
+	       'start
+	       (cfg-rules () ((start whatever ...) rest ...))))))
 
 ; (define-syntax cfg
 ;   (syntax-rules (prec)
