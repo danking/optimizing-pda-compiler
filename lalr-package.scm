@@ -1,6 +1,7 @@
-(define-structure lalr (export gen-lalr1) 
+(define-structure lalr (export cfg create-lalr-parser tiger-grammar)
  (open list-lib
        string-lib
+       tables
        scheme-with-scsh
        defrec-package)
- (files lalr utils-io lr-dvr examples ))
+ (files cfg lalr examples))

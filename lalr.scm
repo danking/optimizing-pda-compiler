@@ -1,1847 +1,1693 @@
-;; ---------------------------------------------------------------------- ;;
-;; FICHIER               : lalr.scm                                       ;;
-;; DATE DE CREATION      : Mon Jan 22 15:42:32 1996                       ;;
-;; DERNIERE MODIFICATION : Mon Jun  3 10:24:43 1996                       ;;
-;; ---------------------------------------------------------------------- ;;
-;; Copyright (C) 1984, 1989, 1990 Free Software Foundation, Inc.          ;;
-;;   (for the Bison source code translated in Scheme)                     ;;
-;; Copyright (C) 1996 Dominique Boucher                                   ;;
-;;   (for the translation in Scheme)                                      ;;
-;; ---------------------------------------------------------------------- ;;
-;; An efficient Scheme LALR(1) Parser Generator  -- lalr.scm              ;;
-;; ---------------------------------------------------------------------- ;;
-;; This file contains yet another LALR(1) parser generator written in     ;;
-;; Scheme. In contrast to other such parser generators, this one          ;;
-;; implements a more efficient algorithm for computing the lookahead sets.;;
-;; The algorithm is the same as used in Bison (GNU yacc) and is described ;;
-;; in the following paper:                                                ;;
-;;                                                                        ;;
-;; "Efficient Computation of LALR(1) Look-Ahead Set", F. DeRemer and      ;;
-;; T. Pennello, TOPLAS, vol. 4, no. 4, october 1982.                      ;;
-;;                                                                        ;;
-;; As a consequence, it is not written in a fully functional style.       ;;
-;; The program has been successfully tested on several Scheme             ;;
-;; interpreters and compilers, including scm4d3, Gambit v2.2, and         ;;
-;; MIT-Scheme 7.2.0 (microcode 11.127, runtime 14.160).                   ;;
-;; ---------------------------------------------------------------------- ;;
-;; HOW TO USE THE PROGRAM                                                 ;;
-;;                                                                        ;;
-;; To generate a parser for a given grammar, the latter must be first     ;;
-;; written down in scheme. The next section will describe the syntax      ;;
-;; of the grammar. Now suppose your grammar is defined like this:         ;;
-;;                                                                        ;;
-;;    (define my-grammar { grammar })                                     ;;
-;;                                                                        ;;
-;; All you need to do is evaluate the expression:                         ;;
-;;                                                                        ;;
-;;    (gen-lalr1 my-grammar "file" [prefix])                              ;;
-;;                                                                        ;;
-;; where "file" is the name of the file (a string) that will contain the  ;;
-;; tables for LR-parsing. The last argument must be supplied if you want  ;;
-;; multiple parsers coexist in the same application. It must be a symbol, ;;
-;; otherwise it will be ignored.                                          ;;
-;;                                                                        ;;
-;; To run the parser, you must first load the LR parsing driver(also part ;;
-;; of this distribution):                                                 ;;
-;;                                                                        ;;
-;;      (load "lr-dvr.scm")                                               ;;
-;;                                                                        ;;
-;; The interface to the generated parser will be the function             ;;
-;;                                                                        ;;
-;;     ([prefix-]parse lexer errorp)                                      ;;
-;;                                                                        ;;
-;; where lexer is the name of the scanner feeding the parser with pairs   ;;
-;; (token . lval) and errorp is the name of a user-defined error          ;;
-;; function (the standard error function can be used as well).            ;;
-;;                                                                        ;;
-;;                                                                        ;;
-;; Here are some notes about the lexer and the error function:            ;;
-;;                                                                        ;;
-;;   - the tokens (which are the first components of the pairs returned   ;;
-;;     by the lexer) must agree with the tokens defined in the grammar.   ;;
-;;                                                                        ;;
-;;   - when the lexer wants to signal the end of the input, it must       ;;
-;;     return the pair '(0) each time it's invoked.                       ;;
-;;                                                                        ;;
-;;   - the error function must accept two parameters (the standard error  ;;
-;;     function accepts a variable number of parameters, so it accepts    ;;
-;;     two).                                                              ;;
-;;                                                                        ;;
-;; ---------------------------------------------------------------------- ;;
-;; THE GRAMMAR FORMAT                                                     ;;
-;;                                                                        ;;
-;; The grammar is specified by first giving the list of terminals and the ;;
-;; list of non-terminal definitions. Each non-terminal definition         ;;
-;; is a list where the first element is the non-terminal and the other    ;;
-;; elements are the right-hand sides (lists of grammar symbols). In       ;;
-;; addition to this, each rhs can be followed by a semantic action.       ;;
-;; By convention, use strings for tokens and atoms for non-terminals.     ;;
-;;                                                                        ;;
-;; For example, consider the following (yacc) grammar:                    ;;
-;;                                                                        ;;
-;;   e : e '+' t                                                          ;;
-;;     | t                                                                ;;
-;;     ;                                                                  ;;
-;;                                                                        ;;
-;;   t : t '*' f                                                          ;;
-;;     | f                                                                ;;
-;;     ;                                                                  ;;
-;;                                                                        ;;
-;;   f : ID                                                               ;;
-;;     ;                                                                  ;;
-;;                                                                        ;;
-;; The same grammar, written for the scheme parser generator, would look  ;;
-;; like this (with semantic actions)                                      ;;
-;;                                                                        ;;
-;; (define my-grammar                                                     ;;
-;;   '(                                                                   ;;
-;;     ; Terminal symbols                                                 ;;
-;;     ID ADD MULT                                                        ;;
-;;     ; Productions                                                      ;;
-;;     (e (e ADD t)  : (+ $1 $3)                                          ;;
-;;        (t)        : $1                                                 ;;
-;;        )                                                               ;;
-;;     (t (t MULT f) : (* $1 $3)                                          ;;
-;;        (f)        : $1                                                 ;;
-;;        )                                                               ;;
-;;     (f (ID)       : $1)                                                ;;
-;;    ))                                                                  ;;
-;;                                                                        ;;
-;; In semantic actions, the symbol $<n> refers to the synthesized         ;;
-;; attribute value of the nth symbol in the production. The value         ;;
-;; associated with the non-terminal on the left is the result of          ;;
-;; evaluating the semantic action (it defaults to #f).                    ;;
-;;                                                                        ;;
-;; If you evaluate                                                        ;;
-;;                                                                        ;;
-;;    (gen-lalr1 my-grammar "foo.scm" 'my)                                ;;
-;;                                                                        ;;
-;; then the generated parser will be named 'my-parser'.                   ;;
-;;                                                                        ;;
-;; NOTE ON CONFLICT RESOLUTION                                            ;;
-;;                                                                        ;;
-;; Conflicts in the grammar are handled in a conventional way.            ;;
-;; Shift/Reduce conflicts are resolved by shifting, and Reduce/Reduce     ;;
-;; conflicts are resolved by choosing the rule listed first in the        ;;
-;; grammar definition.                                                    ;;
-;;                                                                        ;;
-;; You can print the states of the generated parser by evaluating         ;;
-;; `(print-states)'. The format of the output is similar to the one       ;;
-;; produced by bison when given the -v command-line option.               ;;
-;; ---------------------------------------------------------------------- ;;
-;; lalr.scm is free software; you can redistribute it and/or modify       ;;
-;; it under the terms of the GNU General Public License as published by   ;;
-;; the Free Software Foundation; either version 2, or (at your option)    ;;
-;; any later version.                                                     ;;
-;;                                                                        ;;
-;; lalr.scm is distributed in the hope that it will be useful,            ;;
-;; but WITHOUT ANY WARRANTY; without even the implied warranty of         ;;
-;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          ;;
-;; GNU General Public License for more details.                           ;;
-;;                                                                        ;;
-;; You should have received a copy of the GNU General Public License      ;;
-;; along with lalr.scm; see the file COPYING.  If not, write to           ;;
-;; the Free Software Foundation, 675 Mass Ave, Cambridge, MA 02139, USA.  ;;
-;;                                                                        ;;
-;; Dominique Boucher -- Universite de Montreal                            ;;
-;;                                                                        ;;
-;; Send questions, comments or suggestions to boucherd@iro.umontreal.ca   ;;
-;; ---------------------------------------------------------------------- ;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;                            Input Type Definition                             ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(define-syntax def-macro 
-  (syntax-rules ()
-    ((def-macro (name form ...) body ...)
-     (define-syntax name 
-       (syntax-rules ()
-	 ((name form ...) (let () body ...)))))))
+; The LALR(1) Table Constructor takes one of these records as input
+(define-record cfg
 
-(def-macro (BITS-PER-WORD) 28)
-(def-macro (logical-or x  y ...) (bitwise-ior x y ...))
+  ; This is a list.  The elements of the list are either Scheme symbols or
+  ; 'cfg-precedence records.  These represent the terminal symbols in the
+  ; grammar. Precedence records appearing earlier have higher precedence than
+  ; those appearing later.  Scheme symbols are terminal symbols with no defined
+  ; precedence.
+  terminals
 
-;; ILYA: This function toggles the bth bit of first 
-;; element of vector v.
-(def-macro (set-bit v b)
-  (let ((x (quotient b (BITS-PER-WORD)))
-	(y (expt 2 (remainder b (BITS-PER-WORD)))))
-     (vector-set! v x (logical-or (vector-ref v x) y))))
+  ; This is a Scheme symbol which will be returned by the lexer when the end of
+  ; the input has been reached.  It must not appear in either 'terminals or
+  ; 'rules.
+  eoi
 
-;; ILYA: This function sets the nth element of vector v1
-;; to the union of nth element of vector v1 & nth element 
-;; of vector v2.
-(def-macro (bit-union v1 v2 n)
-  (do ((i 0 (+ i 1)))
-       ((= i n))
-     (vector-set! v1 i (logical-or (vector-ref v1 i) 
-				    (vector-ref v2 i)))))
+  ; This is the error symbol.  This symbol is shifted whenever the Push-Down
+  ; Automaton encounters an error.  It may be used in 'rules but should not
+  ; appear in 'terminals and should never be returned by the lexer.  If the
+  ; error symbols is not used, the value may be #f.
+  error
 
-;; - Macro pour les structures de donnees
+  ; This is the non-terminal that is the start symbol
+  start
 
-;; ILYA: Macro's that do stuff
+  ; This is a list of rule records
+  rules)
 
-; This "record" represents a state in the parser.  It contains 4 fields:
-; - number = A unique number assigned to each record.
-; - acc-sym = The symbol that was shifted to cause a tranfer to this state. <--- ???
-; - nitems = (length items)
-; - items = The list of items in this state.  Each item is represented by an
-;           index into 'ritems.  The "dot" is considered to be before the each
-;           index in its corresponding rule.
-(def-macro (new-core)              (make-vector 4 0))
-(def-macro (set-core-number! c n)  (vector-set! c 0 n))
-(def-macro (set-core-acc-sym! c s) (vector-set! c 1 s))
-(def-macro (set-core-nitems! c n)  (vector-set! c 2 n))
-(def-macro (set-core-items! c i)   (vector-set! c 3 i))
-(def-macro (core-number c)         (vector-ref c 0))
-(def-macro (core-acc-sym c)        (vector-ref c 1))
-(def-macro (core-nitems c)         (vector-ref c 2))
-(def-macro (core-items c)          (vector-ref c 3))
+; This is a record used to specify terminal symbols with defined precedence.
+(define-record cfg-precedence
 
-; This "record" represents the shifts that can take place in the paser.  It has
-; 3 fields:
-; - number = This is the same number as the "number" field in its corresponding
-;            "core" record.
-; - nshifts = (length shifts)
-; - shifts = A list of "core numbers" representing states that can be reached
-;            from "this" state by shifting some symbol.  These will be ordered
-;            in descending order according to the corresponding "core" record's
-;            "acc-sym" (i.e. non-terminal shifts, "goto"s, will come last).
-(def-macro (new-shift)              (make-vector 3 0))
-(def-macro (set-shift-number! c x)  (vector-set! c 0 x))
-(def-macro (set-shift-nshifts! c x) (vector-set! c 1 x))
-(def-macro (set-shift-shifts! c x)  (vector-set! c 2 x))
-(def-macro (shift-number s)         (vector-ref s 0))
-(def-macro (shift-nshifts s)        (vector-ref s 1))
-(def-macro (shift-shifts s)         (vector-ref s 2))
+  ; One of (left right non).  This is the associativity of 'terminals.
+  associativity
 
-; This "record" represents the reductions that can take place in a given state
-; in the LR(0) parser.  It contains 3 fields:
-; - number = This is the same number as its "number" field in its corresponding
-;            "core".
-; - nreds = (length rules)
-; - rules = A list of rules (indexes into 'rrhs & 'rlhs) that can be reduced
-(def-macro (new-red)                (make-vector 3 0))
-(def-macro (set-red-number! c x)    (vector-set! c 0 x))
-(def-macro (set-red-nreds! c x)     (vector-set! c 1 x))
-(def-macro (set-red-rules! c x)     (vector-set! c 2 x))
-(def-macro (red-number c)           (vector-ref c 0))
-(def-macro (red-nreds c)            (vector-ref c 1))
-(def-macro (red-rules c)            (vector-ref c 2))
+  ; The list of terminal symbols in this precedence class.
+  terminals)
 
-;; ILYA: make a vector of nelem elements and initialize all 
-;; elements to 0
-(def-macro (new-set nelem)
-  (make-vector nelem 0))
+; This record represents a rule in the grammar
+(define-record cfg-rule
 
-(define-record prod-action
-  production
-  action
-  prec)
+  ; This will be a Scheme symbol that represents the non-terminal symbol on the
+  ; left side of the rule.
+  left-side
 
-;; - Constantes
-(define STATE-TABLE-SIZE 1009)
+  ; This is a list of Scheme symbols represent that symbols on the right side of
+  ; the rule.
+  right-side
 
-; This is the name of the start symbol used internally by the program.  This
-; should not appear in any grammar
-(define start '*start)
+  ; This is either a terminal symbol or #f.  If it is a terminal symbol, it is
+  ; the terminal symbol to use as the precedence for this rule.  If it is #f,
+  ; then the precedence for the rule will be the precedence of the last terminal
+  ; symbol in the rule (if any).
+  precedence
 
-; This is the name of the terminal symbol that the lexer sends which it reaches
-; this end of the input stream.
-(define eoi '*EOI*)
+  ; This is the semantic action for the rule.  No operations are done on it and
+  ; it will appear in the output unmodified.
+  action)
 
-;; - Tableaux 
-;; ILYA: for each global variable I provide a set of functions where
-;; it's being referenced (human-driven dataflow analysis)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;                            Output Type Definition                            ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-; This is a vector of length 'nrules.  Each spot (except 0) corresponds to a
-; rule and contains the index into 'ritem where the items for the right-side
-; of this rule start.
-(define rrhs         #f) ;; initialize-all, pack-grammar, set-firsts, closure, 
-                         ;; build-relations, print-item, calculate-precedence
+; The LALR(1) table constructor returns this as its output
+(define-record LR-program
 
-; This is a vector of length 'nrules.  Each spot (except 0) corresponds to a
-; rule and contains the non-terminal on the left-side of the rule.
-(define rlhs         #f) ;; initialize-all, pack-grammar, set-derives,
-                         ;; set-nullable, print-item
+  ; This is a list of Scheme symbols and gives the terminal symbols which are
+  ; valid for the lexer to return.
+  terminals
 
-; This is a vector of length 'nitems + 1.  It contains of the items on the
-; right-side of all of rules.  'rrhs contains the index of where to start for a
-; particular rule.  The end of a rule is marked by a negative number.  The
-; negative number is the index into 'rrhs and 'rlhs for the rule in question
-; times -1.
-(define ritem        #f) ;; initialize-all, pack-grammar, set-nullable, 
-                         ;; set-firsts, closure, new-itemsets, 
-                         ;; save-reductions, set-max-rhs, build-relations, 
-                         ;; print-item, calculate-precedence
+  ; This is the symbol that the lexer should return when it reaches the end of
+  ; the input.
+  eoi
 
-; Each element in this vector corresponds to an element in 'the-nonterminals.
-; The values are either #t or #f depending on whether the given non-terminal
-; symbol can derive the empty string or not.
-(define nullable     #f) ;; initialize-all, set-nullable, initialize-F, 
-                         ;; build-relations
+  ; This is the symbol that is shifted when errors are encountered.  If defined,
+  ; in will appear in 'rules and 'states but should never be returned by the
+  ; lexer.  If not defined, this entry will be #f.
+  error
 
-; The is a vector of lists.  Each element corresponds to an element in
-; 'the-nonterminals.  The values are lists of indexes into 'rlhs & 'rrhs.  This
-; means that the non-terminal in question directly "derives" the corresponding
-; right-hand side.
-(define derives      #f) ;; initialize-all, set-derives, set-firsts, 
-	                 ;; set-fderives, build-relations
+  ; This is a vector of 'lalr-rule records.  Reduction actions in 'states will
+  ; refer to elements of this vector by their index.
+  rules
 
-; This is similar to 'derives except that the lists in this vector contain all
-; possible rules that can be derived from the corresponding non-terminal no matter
-; how many intermediate derivations are in-between.  For example, the start
-; symbol's list will contain every rule.  See 'set-fderives for more info. <-- ???
-(define fderives     #f) ;; initialize-all, set-fderives, closure
+  ; This is a vector of states.  The start state is state 0.  The values are
+  ; association lists.  The elements of the association lists look like:
+  ; (sym action arg)
+  ; - sym is a Scheme symbol that is either a terminal or non-terminal symbol
+  ; - action is one of 'shift, 'goto (only if 'sym is a non-terminal), 'reduce,
+  ;   or 'accept.
+  ; - arg is a number.  For 'shift and 'goto, it is a state number.  For
+  ;   'reduce, it is an index into 'rules.  It is not present for 'accept.
+  states)
 
-; This is a vector of size 'nvars with each element corresponding to an element
-; in 'the-nonterminals.  The values are sets of non-terminals where each
-; non-terminal in the set is capable of appearing at the begining of a
-; derivation from the non-terminal in question. <--------------------------- ???
-(define firsts       #f) ;; initialize-all, set-firsts, set-fderives
+; The LR-program:rules field will contain a vector of these records.
+(define-record LR-rule
 
-; This is a vector of size 'nsyms.  It is used in constructing the LR(0) parser.
-; If a shift is possible from the current state by some symbol, then the element
-; in this vector corresponding to that symbol will contain the list of "kernel"
-; items that are in the next state.  If a shift by a symbol is undefined in the
-; current state, then so is the value in this vector (i.e. it could be
-; anything).  This list of symbols which are defined is stored in 'shift-symbol.
-(define kernel-base  #f) ;; initialize-all, allocate-item-sets, new-itemsets, 
-                         ;; get-state, new-state
+  ; This is a Scheme symbol that gives the non-terminal to shift upon a
+  ; reduction by this rule
+  left-side
 
-; This vector corresponds to 'kernel-base.  For elements of 'kernel-base which
-; are defined, the corresponding element of this vector will point to the last
-; element of the list in 'kernel-base.
-(define kernel-end   #f) ;; initialize-all, allocate-item-sets, new-itemsets
+  ; This is a vector containing the terminal and non-terminal symbols on the
+  ; right side of this rule.  This is primarily used for its length with is the
+  ; number of elements to pop when a reduction by this rule occurs.
+  right-side
 
-; This is a list of symbols that is used while constructing the LR(0) parser.
-; The symbols in this list are valid terminals and non-terminals to look for in
-; the current state.  The state to shift into when the given symbol is seen is
-; found by consulting 'kernel-base.
-(define shift-symbol #f) ;; initialize-all, new-itemsets, append-states
+  ; This is the action for this rule.  It is unmodified from what was passed
+  ; the LALR(1) Table constructor.
+  action)
 
-; This is a list of "core" records that is used while constructing the LR(0)
-; parser.  These core records represent the states that can be gotten to from
-; the current state by shifting some symbol.
-(define shift-set    #f) ;; initialize-all, append-states, save-shifts
+; The LR-program:states field will contain a vector of these records.
+(define-record LR-state
 
-; A vector of size 'STATE-TABLE-SIZE.  This functions as a hash-table to lookup
-; a "core" record given a list of items.  The hashing function is the sumation
-; of the list (This assumes that the list consits of indexes into the 'ritems
-; vector).
-(define state-table  #f) ;; initialize-all, get-state
+  ; This is an association list that contains the shift and reduce actions for
+  ; this particular states.  The items of the list take the form:
+  ;   (terminal action number)
+  ; terminal is the terminal symbol of lookahead on which the action should
+  ; take place.  action is either 'shift, 'reduce, or 'accept.  number is either
+  ; a state number, a rule number, or not present, depending on action.
+  ; Additionally, terminal may be #f to denote a "default" action.  This action,
+  ; which should always be 'reduce if it is defined, will take place if no other
+  ; terminal matches the lookahead symbol.
+  (shift-reduce-table #f)
 
-; This is a vector of size 'nstates.  It maps a "core-number" to the
-; "core-acc" (or accessing symbol) for each core.
-(define acces-symbol #f) ;; initialize-all, set-accessing-symbol, 
-                         ;; initialize-LA, set-goto-map, initialize-F, 
-                         ;; build-relations
+  ; This is an association list which contains the gotos for this state.  The
+  ; items of this list take the form of:
+  ;   (non-terminal state-number)
+  ; non-terminal is the non-terminal symbol on which this goto takes place.
+  ; state-number is the state-number to shift into.
+  (goto-table #f)
 
-; This is a vector of size 'nstates.  It maps a given "red number" to the "red"
-; record for that number.  If there is no "red" record for a particular state,
-; then the value #f is mapped instead.
-(define reduction-table #f) ;; initialize-all, set-reduction-table, 
-                            ;; initialize-LA, build-tables, 
-                            ;; compact-action-table
+  ; This list encodes the items which make up this state.  This list is used for
+  ; debugging the parser.  The items are in the format of
+  ;   (rule-number dot-index)
+  ; rule-number is an index into 'rules.  dot-number is the index into
+  ; LR-rule:right-side before which the "dot" occurs.  Note that rule-number may
+  ; appear multiple times and dot-index will not be a valid 'right-side index
+  ; if the dot appears at the end of the rule.
+  (items #f))
 
-; This is just like 'reduction-table except it deals with "shift" records.
-(define shift-table  #f) ;; initialize-all, set-shift-table, initialize-LA, 
-                         ;; initialize-F, build-relations, build-tables
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;                                Internal Types                                ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-; This is a vector of size 'nstates.  It maps a given state number to either #t
-; or #f.  A state is considered inconsistent if a reduction by more than one
-; rule my occur in the state or if a there is a reduction and no no non-terminal
-; shifts (gotos).
-(define consistent   #f) ;; initialize-all, initialize-LA, build-relations, 
-	                 ;; build-tables
+; A single instance of this record is created every time a new parser is
+; constructed.  It starts out mostly empty and it is passed from function to
+; function as different computations take place.  By the time every function has
+; executed, a completed LALR(1) parser will be stored in this record.
+(define-record lalr-constructor
 
-; This is a vector of size 'nstates + 1.  It maps a given state number to a
-; non-negative integer.  This integer is the sum of the number of reductions
-; that take place in all the inconsistent states (see 'consistent) numbered less
-; than the one in question.  Thus, the first element is always 0.  The last
-; element, which does not correspond to a state, contains the sum for the whole
-; grammar.
-(define lookaheads   #f) ;; initialize-all, initialize-LA, add-lookahead-edge, 
-                         ;; compute-lookaheads, build-tables
+  ; This is a vector containing every terminal and non-terminal symbol in the
+  ; grammar.  Internally, Scheme symbols are not used.  Symbols from the grammar
+  ; are assigned a number instead.  By indexing that number into this vector,
+  ; you can convert that number back into the original Scheme symbol.
+  ;
+  ; Unless explicitly stated, any reference to a non-terminal or terminal symbol
+  ; in the rest of this documentation really refers to the symbol's number.
+  ;
+  ; Also note that all the non-terminals are listed before any of the terminals
+  ; in this vector.  See 'num-non-terminals for further explanation.
+  (symbols #f)
 
-; This is a vector the is the same length as the value of the last element of
-; 'lookaheads (but at least 1).  Each element is a bit-set.
-(define LA           #f) ;; initialize-all, initialize-LA, compute-lookaheads, 
-	                 ;; build-tables
+  ; This is the number of non-terminal symbols in the grammar.  It is also the
+  ; number of the first terminal symbol in 'symbols.  The test to see if a
+  ; particular symbol is a non-terminal is to test if it is less than this
+  ; number.
+  (num-nonterminals #f)
 
-; This is a vector that is the same size as 'LA.  In contains, in order, the
-; rule numbers (indexes in 'rlhs & 'rrhs) of the rules involved in the
-; reductions in inconsistent (see 'consistent) states.
-(define LAruleno     #f) ;; initialize-all, initialize-LA. add-lookahead-edge, 
-	                 ;; build-tables
+  ; This will be either a Scheme symbol or #f, depending on whether or not an
+  ; error symbol was defined for the grammar.  If one was defined, it will be
+  ; the last element of 'symbols.
+  (error-symbol #f)
 
-; This is a vector that is the same size as 'LA.
-(define lookback     #f) ;; initialize-all, initialize-LA, add-lookback-edge, 
-	                 ;; compute-lookaheads, 
+  ; These three fields function together as a dense representation of the
+  ; grammar.  All three are vectors.  'rule-lhs and 'rule-rhs are of length
+  ; 'nrules and 'rule-items is of length (+ 1 ritems).  Each element in the
+  ; first two (except index 0) corresponds to a rule.  'rule-lhs contains the
+  ; non-terminal on the "left hand side" for that particular rule.  'rule-rhs
+  ; gives the index into 'rule-items where "right hand side" of the rule starts.
+  ;
+  ; 'rule-items contains the "right hand side" of every rule in the grammar.
+  ; The first element is the first symbol of the first rule.  A negative number
+  ; appears to mark the end of a rule.  The absolute value of this negative
+  ; number is the index into 'rule-lhs & 'rule-rhs for the rule just finished.
+  ;
+  ; As an example, the simple grammar:
+  ; S -> A B
+  ; A -> a b c
+  ; B -> {empty}
+  ; B -> ( B )
+  ;
+  ; Would appear as:
+  ; rule-lhs = #( #f S A B B )
+  ; rule-rhs = #( #f 0 3 7 8 )
+  ; rule-items = #( A B -1 a b c -2 -3 ( B ) -4 #f )
+  ;
+  ; Note that symbols were used for clarity.  In reality, the symbols would be
+  ; replaced by their corresponding numbers.  Also note that the first element
+  ; of 'rule-lhs and 'rule-rhs is not used because 0 is not negative and that
+  ; the last element of 'rule-items is always #f.
+  ;
+  ; This representation is used because it makes constructing the LR(0) parser
+  ; fast and easy.  Items are simply indexes into 'rule-items and states are
+  ; simply sets of such indexes.  "Goto" is performed by adding 1 to each item
+  ; in a state.  Reductions are possible when a negative number is reached and
+  ; the rule to reduce by is simply the absolute value of that number.
+  (rule-lhs #f)
+  (rule-rhs #f)
+  (rule-items #f)
 
-; This is a vector of size 'nvars + 1.  Each element corresponds to a
-; non-terminal and the value is the sum of the number of shifts that each
-; non-terminal before it was involved in.  The last element is the total
-; number of non-terminal shifts in the LR(0) parser (the same value as in
-; 'ngotos).
-;
-; I believe that these numbers function as starting indexes for looking into
-; 'from-state & 'to-state when analyzing goto transisions.
-(define goto-map     #f) ;; initialize-all, set-goto-map, map-goto
+  ; This vector maps terminal symbols to their corresponding precedence number.
+  ; Higher numbers have higher precedence.  Terminal symbols with no defined
+  ; precedence are assigned the number 0.
+  (precedence-map #f)
 
-; This is a vector of size 'ngotos.  Each element corresponds to a particular
-; "goto" transision.  The elements are state numbers.  This vector gives the
-; starting state for the corresponding "goto" transision.
-(define from-state   #f) ;; initialize-all, set-goto-map, map-goto, 
-                         ;; build-relations
+  ; This vector maps precedence numbers to the corresponding associativity for
+  ; that precedence level (one of 'left, 'right, or 'non).  Precedence level 0
+  ; is mapped to 'right to correspond to the default of choosing a shift over
+  ; a reduce.
+  (associativity-map #f)
 
-; This vector is just like 'from-state except that it gives the destination
-; state.
-(define to-state     #f) ;; initialize-all, set-goto-map, initialize-F, 
-                         ;; build-relations
+  ; These are both vectors where each element corresponds to the same numbered
+  ; element in rule-lhs & rule-rhs.  'rule-precedence gives the precedence level
+  ; for the rule and 'rule-action is the semantic action for the rule.
+  (rule-precedence #f)
+  (rule-actions #f)
 
-; This is a vector of size 'ngotos.
-(define includes     #f) ;; initialize-all, build-relations, digraph,
+  ; This is a vector of length 'num-nonterminals.  Its values are lists of
+  ; rule numbers (indexes in 'rule-rhs & 'rule-lhs).  The vector gives, for each
+  ; non-terminal symbol, the list of rules of which it is on the left-hand-side.
+  (derives #f)
 
-; This is a vector of size 'ngotos.  Each element is a bit-set.
-(define F            #f) ;; initialize-all, initialize-F, compute-lookaheads, 
-                         ;; traverse
-(define action-table #f) ;; initialize-all, build-tables,
-                         ;; compact-action-table, print-states 
+  ; This is a vector of length 'num-nonterminals.  Its values are lists of rule
+  ; numbers.  Its purpose is to make 'compute-closure fast.
+  ;
+  ; The values are the result of unioning the 'derives sets for every
+  ; non-terminal in the given non-terminal's First set.  The code comments for
+  ; 'compute-firsts give the best description of what the First set is.
+  (first-derives #f)
 
-;; - Variables
-(define nitems          #f) ;The number of items (see pack-grammar)
-(define nrules          #f) ;The number of rules + 1
-(define nvars           #f) ;The number of non-terminal symbols
-(define nterms          #f) ;The number of terminal symbols
-(define nsyms           #f) ;'nterms + 'nvars
-(define nstates         #f) ;The number of states in the parser.  This next (unique) "core" number is the current value of this number.
-(define first-state     #f) ;A list of "core"s that represent the states in the LR(0) parser.
-(define last-state      #f) ;A reference to the last element of 'first-state
-(define final-state     #f) ;The number of the "core" that is the acceptance state
-(define first-shift     #f) ;The list of "shift" records.
-(define last-shift      #f) ;A reference to the last element of the "shift" list.
-(define first-reduction #f) ;A list of "red"s that represent reductions in the LR(0) parser.
-(define last-reduction  #f) ;A reference to the last element of 'last-reduction
-(define nshifts         #f) ;A variable that is used in constructing the LR(0) parser.  It represents the number of shifts possible in the current state.
-(define maxrhs          #f) ;This is the number of symbols on the ride-hand-side of the longest rule in the grammar.
-(define ngotos          #f) ;The total number of "goto" transisions in the grammar.
-(define token-set-size  #f) ;Set to (+ 1 (quotient nterms (BITS-PER-WORD)))
-(define grammar #f)
-(define global-terms #f) ;The list of terminal symbols
+  ; This is a vector of length 'num-nonterminals.  Its values are either #t or
+  ; #f.  It specifies which non-terminal symbols can derive the empty string and
+  ; which cannot.
+  (nullable #f)
 
-; This is the start function.  'rewrite-grammar is where the real work starts.
-; TODO: List of the arguments to this function
-; TODO: Think of a beter name for this function.
-(define (gen-lalr1 gram output-file . opt)
-  (initialize-all)
-  (rewrite-grammar gram)
-  (output-to-file output-file opt) )  ;; see utils-io.scm
+  ; This is a vector containing 'state records.  It represents the states in the
+  ; LR(0) parser.  The starting state is in index 0.  See the description of the
+  ; 'state record for more information.
+  (states #f)
 
-; Initializes all the global variables to their starting values
-(define (initialize-all)
-  (set! rrhs         #f)
-  (set! rlhs         #f)
-  (set! ritem        #f)
-  (set! nullable     #f)
-  (set! derives      #f)
-  (set! fderives     #f)
-  (set! firsts       #f)
-  (set! kernel-base  #f)
-  (set! kernel-end   #f)
-  (set! shift-symbol #f)
-  (set! shift-set    #f)
-  (set! state-table  (make-vector STATE-TABLE-SIZE '()))
-  (set! acces-symbol #f)
-  (set! reduction-table #f)
-  (set! shift-table  #f)
-  (set! consistent   #f)
-  (set! lookaheads   #f)
-  (set! LA           #f)
-  (set! LAruleno     #f)
-  (set! lookback     #f)
-  (set! goto-map     #f)
-  (set! from-state   #f)
-  (set! to-state     #f)
-  (set! includes     #f)
-  (set! F            #f)
-  (set! action-table #f)
-  (set! nstates         #f)
-  (set! first-state     #f)
-  (set! last-state      #f)
-  (set! final-state     #f)
-  (set! first-shift     #f)
-  (set! last-shift      #f)
-  (set! first-reduction #f)
-  (set! last-reduction  #f)
-  (set! nshifts         #f)
-  (set! maxrhs          #f)
-  (set! ngotos          #f)
-  (set! token-set-size  #f))
+  ; This is the index into 'states where the accept state occurs.  The accept
+  ; will occur on the EOI symbol in this state.
+  (accept-state #f)
 
-; This functions as the high-level branching procudure.
-; It sets several global variables and then calls several other procedures to
-; do processing on those variables.
-;
-; Sample Grammar (used below)
-; S -> A       : $1
-;    | S A     : (+ $1 $2)
-; A -> ;empty  : 1
-;    | A x y   : (* $1 $2 $3)
-;
-; Arguments
-; - terms = The list of terminal symbols
-; - vars = The list of non-terminal symbols
-; - gram = A list that looks like the following:
-;          '( (S (A)
-;                (S A))
-;             (A ()
-;                (A x y)) )
-;          Note that, instead of symbols, the terminals and non-terminals will
-;          be replaced by the corresponding numbers.
-; - gram/actions = A list that looks like the following:
-;          '( ((S A) . $1)
-;             ((S S A) . (+ $1 $2))
-;             ((A) . 1)
-;             ((A x y) . (* $1 $2 $3)) )
-;          Again, symbols are replaced by corresponding numbers.
-; - la = The list of left-associative terminal symbols
-; - ra = The list of right-associative terminal symbols
-; - na = The list of non-associative terminal symbols
-; - prec = A list of lists.  Each internal list is a list of terminals in a
-;          particular precedence class.  The lists are in increasing order of
-;          precedence.
-; - rprec = A list containing either terminal symbols or #f.  Each element
-;           corresponds to an element in 'gram/actions.  It gives the precedence
-;           for the corresponding rule or #f if there is no precedence.
-(define (do-things terms vars gram gram/actions la ra na prec rprec)
-  (set! the-terminals (list->vector terms))
-  (set! the-nonterminals (list->vector vars))
-  (set! nterms (length terms))
-  (set! nvars  (length vars))
-  (set! nsyms  (+ nterms nvars))
-  (set! global-terms terms)
+  ; This vector is the same size as 'states.  Its values are #t or #f.  It marks
+  ; individual states as either consistent or inconsistent.  A state is
+  ; inconsistent if a reduction by more than one rule may occur in the state or
+  ; if there is at least one reduction and no non-terminal transitions.
+  (consistent #f)
 
-  (let ( (rule-preced (list->vector rprec)) 
-	 (no-of-rules (length gram/actions))
-	 (no-of-items (let loop ((l gram/actions) (count 0))
-			(if (null? l) 
-			    count
-			    (loop (cdr l) (+ count (length (caar l))))))) )
-    (pack-grammar no-of-rules no-of-items gram)
-    (calculate-precedence rule-preced)
-    (set-derives)
-    (set-nullable)
-    (generate-states)
-    (lalr)
-    (build-tables prec ra na rule-preced)
-    (compact-action-table) ) )
+  ; This is a vector whose size is one greater than 'states.  It maps a given
+  ; state to the number of reductions that can take place in all inconsistent
+  ; states numbered less than the state in question.  The last element contains
+  ; the sum for all the states.
+  ;
+  ; The purpose of the vector is to serve as an index into 'reduction-rule-num,
+  ; 'lookback, and 'LA.  If a state is inconsistent, then this vector maps a
+  ; a state to the index into those vectors where the data for that state
+  ; starts.
+  (reduction-map #f)
 
-; Small funciton used by 'process-assoc and 'rewrite-grammar to check the
-; validity of a given terminal.
-;
-; Arguments:
-; - term = the terminal symbol in question
-; - rv = a list of previous terminals
-; Returns
-;   If 'term is valid, then 'rv with 'term cons in front of it, otherwise it
-; calls 'error
-(define (check-term term rv)
-  (cond ((not (valid-terminal? term)) (error "Invalid terminal:" term))
-	((member term rv) (error "Terminal previously defined:" term))
-	(else (cons term rv))) )
+  ; This vector is the same size as the last element in 'reduction-map (which
+  ; could be 0).  It contains, in order of state number, the rule numbers of
+  ; reductions that take place in inconsistent states.
+  (reduction-rule-num #f)
 
-; This function is used be 'rewrite-grammar to check the validity of terminals
-; that have defined associativity.
-;
-; Arguments
-; - it = The list of terminals in the association list
-; - r-terms = This list of termianls seen so far
-; - ass = null (used internally)
-; - prec = null (used internally)
-; Returns 3 values
-; 1) 'r-terms with all the newly defined terminals added to it
-; 2) (reverse it)
-; 3) (reverse it) -> Yes, the same as #2
-(define (process-assoc it r-terms ass prec)
-  (if (null? it) 
-      (values r-terms ass prec)
-      (process-assoc (cdr it) 
-		     (check-term (car it) r-terms) 
-		     (cons (car it) ass) 
-		     (cons (car it) prec))) )
+  ; This vector is the same size as 'reduction-rule-num.  It maps a reduction to
+  ; the list of non-terminal transitions that "this" reduction can immediately
+  ; cause.  See the LALR analysis description in the comments for
+  ; 'construct-lalr-parser.
+  (lookback #f)
 
-; This functions takes a grammar in the user format and does some
-; transformations on it before calling 'do-things.
-(define (rewrite-grammar grammar)
-  (let ( (terms (if (not (pair? grammar))
-		    (error "Grammar definition must be a non-empty list")
-		    (car grammar)) )
-	 (rules (cdr grammar)) )
-    (let term-loop ( (terms terms)
-		     (rev-terms '())
-		     (r-assoc '())
-		     (l-assoc '())
-		     (non-assoc '())
-		     (prec '()) )
-	(if (not (null? terms))
-	    (if (not (pair? (car terms)))
-		; Handle terminals with no defined associativity
-		(term-loop (cdr terms)
-			   (check-term (car terms) rev-terms)
-			   r-assoc
-			   l-assoc
-			   non-assoc
-			   prec)
-		; Handle an associativity list
-		(receive (r-terms ass p) (process-assoc (cdar terms)
-							rev-terms
-							'()
-							'())
-			 (cond ( (eq? (caar terms) 'right)
-				 (term-loop (cdr terms)
-					    r-terms
-					    (append ass r-assoc)
-					    l-assoc
-					    non-assoc
-					    (cons p prec)) )
-			       ( (eq? (caar terms) 'left)
-				 (term-loop (cdr terms)
-					    r-terms
-					    r-assoc
-					    (append ass l-assoc)
-					    non-assoc
-					    (cons p prec)) )
-			       ( (eq? (caar terms) 'non)
-				 (term-loop (cdr terms)
-					    r-terms
-					    r-assoc
-					    l-assoc
-					    (append ass non-assoc)
-					    (cons p prec)) )
-			       (else (error "Associativity unknown:"
-					    (caar terms))) )))
-	    ; At this point the state of the variables is as follows:
-	    ; - terms is null
-	    ; - rev-terms is a list of all terminals (in reverse)
-	    ; - r-assoc is a list of all the right associative terminals
-	    ; - l-assoc is a list of all the left associative terminals
-	    ; - non-assoc is a list of all the non-associative terminals
-	    ; - prec is a list of lists.  Each internal list is a list of
-	    ;   terminals in a particular precedence class.  The lists are in
-	    ;   decreasing order of precedence.
-	    (begin
+  ; This vector is the same size as 'reduction-rule-num.  Its values are bitsets
+  ; where every bit corresponds to a terminal symbol.  It maps a reduction to
+  ; the list of terminals that can appear on the front of the input-string if
+  ; this reduction were to take place.  This is the end result of the LALR
+  ; analysis.
+  (LA #f)
 
-	      ; Start by checking the production rules for rules that define an
-	      ; invalid non-terminal or a non-terminal with the same name as a
-	      ; terminal symbol
-	      (any (lambda (r)
-		     (if (not (pair? r))
-			 (error "Rule must be a non-empty list")
-			 (cond ((not (valid-nonterminal? (car r)))
-				(error "Invalid nonterminal:" (car r)))
-			       ((member (car r) rev-terms)
-				(error "Nonterminal previously defined:"
-				       (car r))) )))
-		   rules)
+  ; This is a vector of length (+ num-nonterminals 1).  Each element corresponds
+  ; to a non-terminal symbol.  The value for a particular non-terminal is the
+  ; sum of the number of transistions that each non-terminal before it was
+  ; involved in.  The last element is the sum for the entire grammar.
+  ;
+  ; The purpose of the vector is to map a given non-terminal to the start of the
+  ; data for it in 'from-state and 'to-state.
+  (goto-map #f)
 
-	      (let* (
-		      ; The list of terminals with EOI added
-		      (terms (cons eoi (reverse rev-terms)))
+  ; These vectors are the same size as the last element in 'goto-map.  Each
+  ; element corresponds to non-terminal transition.  The values are the numbers
+  ; (indexes in 'states) of the starting and ending states (respectively) for
+  ; the transition.
+  (from-state #f)
+  (to-state #f)
 
-		      ; The list of non-terminals with the start symbol added
-		      (nonterms
-		       (if (null? rules)
-			   (error "Grammar must contain at least one nonterminal")
-			   (cons start
-				 (fold-right
-				  (lambda (rule nts)
-				    (if (member (car rule) nts)
-					(error "Nonterminal previously defined:"
-					       (car rule))
-					(cons (car rule) nts)))
-				  '()
-				  rules))))
+  ; Both these vectors are the same size as 'from-state & 'to-state and both map
+  ; a non-terminal transition to a list of non-terminal transitions.  These
+  ; vectors define the relationships of the same name that are described in the
+  ; in the LALR analysis overview.  See the comments for 'construct-lalr-parser.
+  (reads #f)
+  (includes #f)
 
-		      ; The result of calling 'rewrite-nonterm-def on all the
-		      ; non-terminal definitions.  See that function for more
-		      ; information.
-		      (compiled-nonterminals
-		       (map (lambda (rule)
-			      (rewrite-nonterm-def rule
-						   terms
-						   nonterms))
-			    (cons `(,start ((,(cadr nonterms) ,eoi) 
-					     $1))
-				  rules))) )
+  ; This vector is the same size as 'from-state & 'to-state and maps
+  ; non-terminal transitions to the list of terminal symbols that can be shifted
+  ; after it.  See the comments for 'construct-lalr-parser.
+  (follow #f)
 
-		; Convert the various variables (mostly 'compiled-nonterminals)
-		; to the forms that 'do-things wants and then call it.
-		(do-things terms
-			   nonterms
-			   (map (lambda (x) (cons (caar x) (map cdr x)))
-				(map (lambda (x) 
-				       (map prod-action:production x))
-				     compiled-nonterminals))
-			   (apply append 
-				  (map (lambda (y)
-					 (map (lambda (x) 
-						(cons (prod-action:production x)
-						      (prod-action:action x)))
-					      y))
-				       compiled-nonterminals))
-			   l-assoc
-			   r-assoc
-			   non-assoc
-			   (reverse prec)
-			   (cons #f
-				 (apply append
-					(map (lambda (x) (map prod-action:prec
-							      x))
-					     compiled-nonterminals))))))) ) ) )
+  ; This is the action table that goes into the LR-automaton.  It is generated
+  ; seperately because conflict resolution has to be dealt with when
+  ; constructing it.
+  (action-table #f))
 
-; The purpose of this function is to compute the values for 'nrules, 'nitems,
-; 'rlhs, 'rrhs, and 'ritem.  See the descriptions of those variables for more
-; information.
-;
-; Arguments:
-; - no-of-rules = The number of rules in the grammar (each non-terminal has at
-;                 least one rule)
-; - no-of-items = The number of symbols in the grammar.  Duplicates count as
-;                 many times as they appear.  The grammar below has 10 items.
-; - gram = The grammar in the format of
-;          '( (S (A)
-;                (S A))
-;             (A ()
-;                (A x y)) )
-; Returns:
-;   nothing (it produces side effects)
-(define (pack-grammar no-of-rules no-of-items gram)
-  (set! nrules (+  no-of-rules 1))
-  (set! nitems no-of-items)
-  (set! rlhs (make-vector nrules #f))
-  (set! rrhs (make-vector nrules #f))
-  (set! ritem (make-vector (+ 1 nitems) #f))
+; This record defines an individual state in the LR(0) state machine.
+(define-record state
 
-  (let loop ((p gram) (item-no 0) (rule-no 1))
-    (if (not (null? p))
-	(let ((nt (caar p)))
-	  (let loop2 ((prods (cdar p)) (it-no2 item-no) (rl-no2 rule-no))
-	    (if (null? prods)
-		(loop (cdr p) it-no2 rl-no2)
-		(begin
-		  (vector-set! rlhs rl-no2 nt)
-		  (vector-set! rrhs rl-no2 it-no2)
-		  (let loop3 ((rhs (car prods)) (it-no3 it-no2))
-		    (if (null? rhs)
-			(begin
-			  (vector-set! ritem it-no3 (- rl-no2))
-			  (loop2 (cdr prods) (+ it-no3 1) (+ rl-no2 1)))
-			(begin
-			  (vector-set! ritem it-no3 (car rhs))
-			  (loop3 (cdr rhs) (+ it-no3 1))))))))))) )
+  ; This is a number unique to the state.  It is the same number as its index in
+  ; the 'states vector.
+  number
 
-; This function computes the value of 'derives.
-(define (set-derives)
-  (let ( (delts (make-vector (+ nrules 1) 0))
-	 (dset  (make-vector nvars -1)) )
-    (let loop ((i 1) (j 0))		; i = 0
-      (if (< i nrules)
-	  (let ((lhs (vector-ref rlhs i)))
-	    (if (>= lhs 0)
-		(begin
-		  (vector-set! delts j (cons i (vector-ref dset lhs)))
-		  (vector-set! dset lhs j)
-		  (loop (+ i 1) (+ j 1)))
-		(loop (+ i 1) j)))))   ;<----------------------------------- ???
-    (set! derives (make-vector nvars 0))
+  ; This is the symbol that was shifted just prior to arriving in this state
+  access-symbol
+
+  ; This is the (sorted) set of (kernel) items in this state.  The items are
+  ; represented by indexes into 'rule-items.  The "dot" is considered to be
+  ; immediately before the index given.
+  items
+
+  ; This is the list of state records that represent states that can be reached
+  ; from "this" state by shifting a symbol.  The list is in descending order
+  ; according to the value of the records' 'access-symbol field.  In particular,
+  ; this means that non-terminal shifts (a.k.a. "gotos") come last.
+  (shifts #f)
+
+  ; This is a list of rule numbers (indexes into 'rule-lhs & 'rule-rhs).  This
+  ; represents which rules can be reduced by in this state.
+  (reductions #f))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;                                 Utility Code                                 ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;------------------------------------ Sets -------------------------------------
+; Sets are represented as sorted lists
+
+; This function adds 'element to 'set
+(define (set-insert element set)
+  (if (null? set)
+      (cons element '())
+      (let ((x (car set)))
+	(cond ((< element x) (cons element set))
+	      ((> element x) (cons x (set-insert element (cdr set))))
+	      (else set)))))
+
+; This function takes two sets and computes their union.
+(define (set-union set1 set2)
+  (cond ((null? set1) set2)
+	((null? set2) set1)
+	(else (let ((a (car set1)) (b (car set2)))
+		(cond ((> a b) (cons b (set-union set1 (cdr set2))))
+		      ((< a b) (cons a (set-union (cdr set1) set2)))
+		      (else (set-union (cdr set1) set2)))))))
+
+;---------------------------------- Bit-Sets -----------------------------------
+; Bit-Sets are simply integers.
+
+; Computes the union of two bit-sets
+(define bit-union bitwise-ior)
+
+; Sets the 'i-th bit of 'bitset to 1.
+(define (set-bit bitset i)
+  (bit-union bitset (expt 2 i)))
+
+;---------------------------------- Vectors ------------------------------------
+(define (vector-copy vector . size)
+  (let* ((size (if (null? size) (vector-length vector) (car size)))
+	 (result (make-vector size)))
     (let loop ((i 0))
-      (if (< i nvars)
-	  (let ((q (let loop2 ((j (vector-ref dset i)) (s '()))
-		     (if (< j 0)
-			 s
-			 (let ((x (vector-ref delts j)))
-			   (loop2 (cdr x) (cons (car x) s)))))))
-	    (vector-set! derives i q)
-	    (loop (+ i 1)))))) )
+      (if (< i size)
+	  (begin
+	    (vector-set! result i (vector-ref vector i))
+	    (loop (+ i 1)))
+	  result))))
 
-; This function computes the value of 'nullable
-(define (set-nullable)
-  (set! nullable (make-vector nvars #f))
-  (let ((squeue (make-vector nvars #f))
-	(rcount (make-vector (+ nrules 1) 0))
-	(rsets  (make-vector nvars #f))
-	(relts  (make-vector (+ nitems nvars 1) #f)))
-    (let loop ((r 0) (s2 0) (p 0))
-      (let ((*r (vector-ref ritem r)))
-	(if *r
-	    (if (< *r 0)
-		(let ((symbol (vector-ref rlhs (- *r))))
-		  (if (and (>= symbol 0)
-			   (not (vector-ref nullable symbol)))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;                              The Main Algorithm                              ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; This is the top-level function for the PDA generation algorithm.  It takes
+; either one or two arguments.  The first argument is a 'cfg record that defines
+; the Context-Free Grammar to convert.  The second, optional argument is a place
+; to write the state table.  This may take many forms.  If it is a string, it
+; will be interpreted as a filename and the state-table will be written to that
+; file.  If it is a port, the state-table will be written to that port.  If it
+; is '#t, the state-table will be written to the value of (current-output-port).
+; If it is '#f or not given, the state table will not be written.
+;
+; It returns an 'LR-program record that represents the LALR(1) parser.
+;
+;
+; --- WHERE TO FIND MORE INFORMATION
+;
+; The comments in this file assume that you are familiar with general LR
+; parsing.  If not, a good introduction can be found in the "Dragon Book" here:
+;
+;     <citation for Dragon Book>
+;
+; This function generations a LALR(1) state table.  It uses an efficient
+; algorithm that is described fully in:
+;
+;     "Efficient Computation of LALR(1) Look-Ahead Sets", F. DeRemer and
+;     T. Pennello, TOPLAS, vol. 4, no. 4, october 1982.
+;
+;
+; --- A SHORT DESCRIPTION OF THE LALR ALGORITHM
+;
+; Note: In the follow description, 'u' denotes "union" and 'U', when applied to
+; a set of sets, denotes the result of unioning all internal sets.  'p' and 'q'
+; are states in the LR(0) state machine.  'A', 'B', 'C', and 'D' are
+; non-terminal symbols.  'w' represents a possibly empty string of terminal and
+; non-terminal symbols.  A->w denotes a reduction.
+;
+; The final result of the LALR analysis is LA.  This is a list of terminals for
+; every reduction in the LR(0) state machine.  This tells the table constructor
+; which look-ahead tokens should have the corresponding "reduce" action.  LA is
+; represented internally as a bitset with one bit for every terminal symbol.
+;
+; LA(q,A->w) = U( Follow(p,A) | (q,A->w) lookback (p,A) )
+;
+; lookback is mapping from reductions in the LR(0) state machine to a list of
+; non-terminal transitions ("gotos") that could happen immediately after each
+; reduction.
+;
+; Follow is a list of terminal symbols for every non-terminal transition in the
+; LR(0) state machine.  It gives the list of terminal symbols that can appear
+; on the input string immediately after each nonterminal transition in a valid
+; grammar.
+;
+; Thus, the problem of computing LA is reduced to the problem of computing
+; follow sets for the "gotos" in the grammar.
+;
+; Follow(p,A) = Read(p,A) u U{ Follow(p',B) | (p,A) includes (p',B) }
+; Read(p,A)   = DR(p,A)   u U{ Read(r,C)    | (p,A) reads    (r,C)  }
+;
+; Note that these definitions are recursive and very similar.
+;
+; includes is a mapping from non-terminal transitions to a list of non-terminal
+; transitions.  This relation takes care of the fact that if there is a rule
+; A -> B C D, and 'D' is nullable, then the follow sets of both 'C' and 'D'
+; "include" whatever is in the follow set of 'A'.
+;
+; reads is another mapping from non-terminal transitions to a list of
+; non-terminal transitions.  This relation takes care of the fact that if
+; "A B C D" appears on the right side of a rule, and 'B' and 'C' are nullable,
+; then the follow set for 'B' includes the follow set of 'C' and the follow set
+; of 'A' includes the follow set of 'B'.
+;
+; DR ("Direct Read") is a list of terminal symbols for every non-terminal
+; trasition.  It tells which terminal symbols can be shifted immediately after
+; a non-terminal transition.  This is just the list of which terminal symbols
+; have a "shift" action defined in the "to state" of the transition.
+;
+; Now we have a way to compute Follow sets (and thus LA sets) from simple
+; properties of the grammar and the LR(0) state machine.  We just need a way to
+; deal with the recursive definition of Read and Follow.  The paper defines a
+; fuction called "digraph" which takes care of this.  It finds
+; Strongly Connected Components (a maximal set of verticies where there is a
+; path from any vertex to any other vertex in the set) in the graph definef by
+; the includes and reads relations and treats them as single nodes.  After that,
+; the graph becomes a tree and information simply propogates up the tree.
+;
+; QUALIFICATION
+; The paper computes LA for every reduction in the grammar.  This algorithm only
+; computes LA for "inconsistent" states.  Inconsistent states are states in
+; which there is more than one reduction or a single reduction and no
+; non-terminal transitions.  For the other reductions, the reduction happens by
+; "default" (that is, for any terminal symbol that does not have any other
+; action defined).  This does not change the grammar any.  Any errors in the
+; input string will be caught in the next state when the PDA finds that no shift
+; is defined for the terminal symbol.
+(define (create-lalr-parser grammar)
+  (let ((lalr-record (convert-grammar grammar)))
+    (compute-precedence lalr-record)
+    (compute-derives lalr-record)
+    (compute-nullable lalr-record)
+
+    (compute-first-derives lalr-record)
+    (compute-LR0-states lalr-record)
+
+    (compute-consistent-and-reduction-map lalr-record)
+    (compute-reduction-rule-num lalr-record)
+    (compute-goto-map lalr-record)
+    (compute-DR-and-reads lalr-record)
+    (compute-includes-and-lookback lalr-record)
+    (compute-follow lalr-record)
+    (compute-LA lalr-record)
+
+    (compute-action-table lalr-record)
+    (construct-LR-program lalr-record)))
+
+;-------------------------------------------------------------------------------
+; This function takes the grammar as it was passed in and converts into the
+; representations used internal to the parser.  Along the way, it does a lot
+; of sanity-checking on the grammar.
+;
+; This function sets the values of the following lalr-constructor fields:
+; - symbols
+; - num-nonterminals
+; - rule-lhs
+; - rule-rhs
+; - rule-items
+; - rule-precedence (This value will be modified by 'calculate-precedence)
+; - rule-action
+; - precedence
+(define (convert-grammar grammar)
+  (if (not (cfg? grammar))
+      (error "Input is not a CFG Record."))
+
+  (let* ((lalr-record (make-lalr-constructor))
+	 (terminals (extract-terminals (cfg:terminals grammar)
+				       (cfg:error grammar)))
+	 (num-terminals (+ 1 (length terminals)))
+	 (nonterminals (extract-nonterminals (cfg:rules grammar)))
+	 (num-nonterminals (+ 1 (length nonterminals)))
+	 (eoi (cfg:eoi grammar)))
+
+    (receive
+     (symbols reverse-map)
+     (create-symbol-map nonterminals num-nonterminals terminals num-terminals)
+
+     ; Deal with the symbol for end-of-input
+     (if (not (symbol? eoi))
+	 (error "cfg:eoi must be a symbol."))
+     (if (table-ref reverse-map eoi)
+	 (error "cfg:eoi cannot be a terminal or nonterminal symbol:" eoi))
+
+     (vector-set! symbols num-nonterminals eoi)
+     (table-set! reverse-map eoi num-nonterminals)
+
+     ; Create the new start symbol (S' -> S <eoi>)
+     (let* ((start (cfg:start grammar))
+	    (new-start (create-start-symbol start reverse-map))
+	    (aug-grammar (cons (make-cfg-rule new-start (list start eoi) #f '$1)
+			       (cfg:rules grammar))))
+
+       (if (or (not (symbol? start))
+	       (not (table-ref reverse-map start))
+	       (not (< (table-ref reverse-map start) num-nonterminals)))
+	   (error "cfg:start must be a nonterminal symbol"))
+
+       (vector-set! symbols 0 new-start)
+       (table-set! reverse-map new-start 0)
+
+       ; Compile the grammar
+       (receive
+	(rule-lhs rule-rhs rule-items)
+	(pack-grammar aug-grammar reverse-map num-nonterminals)
+
+	(set-lalr-constructor:rule-lhs lalr-record rule-lhs)
+	(set-lalr-constructor:rule-rhs lalr-record rule-rhs)
+	(set-lalr-constructor:rule-items lalr-record rule-items))
+
+       ; Convert the precedence information to hard numbers
+       (receive
+	(precedence-map associativity-map)
+	(create-precedence-map (cfg:terminals grammar) num-terminals
+			       num-nonterminals reverse-map)
+
+	(set-lalr-constructor:precedence-map lalr-record precedence-map)
+	(set-lalr-constructor:associativity-map lalr-record associativity-map)
+	(set-lalr-constructor:rule-precedence lalr-record
+	 (extract-rule-prec aug-grammar num-nonterminals reverse-map
+			    precedence-map)))
+
+       ; Store the rule actions for later use
+       (set-lalr-constructor:rule-actions lalr-record
+	(list->vector (cons '() (map cfg-rule:action aug-grammar)))))
+
+     ; Set the last few fields and then return the record
+     (set-lalr-constructor:num-nonterminals lalr-record num-nonterminals)
+     (set-lalr-constructor:symbols lalr-record symbols)
+     (set-lalr-constructor:error-symbol lalr-record (cfg:error grammar)))
+
+    lalr-record))
+
+; This is a helper function used by 'convert-grammar.  It takes the list of
+; terminals and precedence records in the input and returns a simple list of
+; terminals.  Along the way, it checks for invalid terminals symbols.  Duplicate
+; terminal declarations will be caught by 'create-symbol-map.
+(define (extract-terminals grammar-terminals error-symbol)
+  (if (not (list? grammar-terminals))
+      (error "cfg:terminals is not a list"))
+  (if (and error-symbol (not (symbol? error-symbol)))
+      (error "cfg:error is an invalid symbol"))
+  (fold-right
+   (lambda (element term-list)
+     (cond ((and (eq? element error-symbol) error-symbol)
+	    (error "cfg:error cannot be the same as a terminal symbol"))
+	   ((symbol? element)
+	    (cons element term-list))
+	   ((cfg-precedence? element)
+ 	    (if (list? (cfg-precedence:terminals element))
+ 		(fold-right
+		 (lambda (element term-list)
+		   (cond ((and (eq? element error-symbol) error-symbol)
+			  (error
+			   "cfg:error cannot be the same as a terminal symbol"))
+			 ((symbol? element)
+			  (cons element term-list))
+			 (else
+			  (error "Invalid terminal symbol:" element))))
+		 term-list (cfg-precedence:terminals element))
+ 		(error "precedence:terminals must be a list")))
+	   (else
+	    (error "Invalid terminal declaration:" element))))
+   (if error-symbol (list error-symbol) '()) grammar-terminals))
+
+; This is a helper function used by 'convert-grammar.  It takes the list of
+; rules and returns a list of all the non-terminal symbols that the rules
+; define.  It also checks to see that the non-terminal names are valid.
+; Nonterminal names that are the same as terminal names will be caught by
+; 'create-symbol-map.
+(define (extract-nonterminals grammar-rules)
+  (if (not (list? grammar-rules))
+      (error "cfg:rules is not a list"))
+  (delete-duplicates
+   (map
+    (lambda (element)
+      (if (cfg-rule? element)
+	  (let ((x (cfg-rule:left-side element)))
+	    (if (symbol? x)
+		x
+		(error "Invalid nonterminal name:" x)))
+	  (error "cfg:rules must contain only rule records")))
+    grammar-rules)))
+
+; This is a helper function used by 'convert-grammar.  It creates a mapping
+; between the Scheme symbols used in the grammar to the numbers used internally.
+; It returns two values.  The first is a vector that is stored in
+; 'lalr-constructor.  It is used to map from numbers back to the symbols.  The
+; second value is a hash-table that maps the symbols into the corresponding
+; numbers.
+;
+; This function also checks to make sure that there are no duplicate terminal
+; symbols ('nonterminals is guaranteed to have no duplicates) and that there are
+; no terminal symbols and nonterminal symbols with the same name.
+(define (create-symbol-map nonterminals num-nonterminals terminals num-terms)
+  (let ((symbol-map (make-vector (+ num-nonterminals num-terms)))
+	(reverse-map (make-symbol-table)))
+    (let loop ((i (+ num-nonterminals 1)) (terminals terminals))
+      (if (pair? terminals)
+	  (let ((terminal (car terminals)))
+	    (if (table-ref reverse-map terminal)
+		(error "Duplicate terminal definition:" terminal))
+	    (vector-set! symbol-map i terminal)
+	    (table-set! reverse-map terminal i)
+	    (loop (+ i 1) (cdr terminals)))))
+    (let loop ((i 1) (nonterminals nonterminals))
+      (if (pair? nonterminals)
+	  (let ((nonterminal (car nonterminals)))
+	    (if (table-ref reverse-map nonterminal)
+		(error "Non-terminal and terminal with same name:" nonterminal))
+	    (vector-set! symbol-map i nonterminal)
+	    (table-set! reverse-map nonterminal i)
+	    (loop (+ i 1) (cdr nonterminals)))))
+    (values symbol-map reverse-map)))
+
+; This is a helper function used by 'convert-grammar.  It creates a the new
+; start symbol and insures that it does not conflict with any symbols already
+; existing in the grammar.
+(define (create-start-symbol grammar-start reverse-map)
+  (let loop ((sym '*start))
+    (if (table-ref reverse-map sym)
+	(loop (string->symbol (string-append (symbol->string sym) "*")))
+	sym)))
+
+; This is a helper function used by 'convert-grammar.  It creates the 'rule-lhs,
+; 'rule-rhs, and 'rule-items fields of the lalr-constructor.
+(define (pack-grammar grammar-rules reverse-map eoi-num)
+  (let* ((num-rules (+ (length grammar-rules) 1))
+	 (rule-lhs (make-vector num-rules #f))
+	 (rule-rhs (make-vector num-rules #f))
+	 (num-items (fold (lambda (rule num-items)
+			    (+ num-items (length (cfg-rule:right-side rule)) 1))
+			  0 grammar-rules))
+	 (rule-items (make-vector (+ 1 num-items) #f)))
+
+    (let rule-loop ((rules grammar-rules) (item-num 0) (rule-num 1))
+      (if (pair? rules)
+	  (begin
+	    (vector-set! rule-lhs rule-num
+			 (table-ref reverse-map
+				    (cfg-rule:left-side (car rules))))
+	    (vector-set! rule-rhs rule-num item-num)
+	    (let item-loop ((syms (cfg-rule:right-side (car rules)))
+			    (item-num item-num))
+	      (if (pair? syms)
+		  (let ((num (table-ref reverse-map (car syms))))
+		    (cond ((eq? num #f)
+			   (error "Unknown symbol:" (car syms)))
+			  ((and (= num eoi-num) (not (= rule-num 1)))
+			   (error "cfg:eoi cannot be used in the grammar"))
+			  (else
+			   (vector-set! rule-items item-num num)
+			   (item-loop (cdr syms) (+ item-num 1)))))
+		  (begin
+		    (vector-set! rule-items item-num (- rule-num))
+		    (rule-loop (cdr rules) (+ item-num 1) (+ rule-num 1))))))))
+
+    (values rule-lhs rule-rhs rule-items)))
+
+; This is a helper function used by 'convert-grammar.  It take the list of
+; terminals symbols and precedence records from the input and returns two
+; values.  The first is a vector that maps terminal symbols to a number which
+; represents the terminal's precedence.  Higher numbers represent higher
+; precedence and zero is assigned to terminals without defined precedence.  The
+; second value is a vector that maps precedence numbers to that precedence
+; level's corresponding associativity.  Level 0 is assigned the value of 'right
+; to correspond to choosing shifts over reductions.
+(define (create-precedence-map terminals num-terms num-nonterminals reverse-map)
+  (let* ((precedence-map (make-vector num-terms 0))
+	 (rev-assoc-map (cdr
+	  (fold-right
+	   (lambda (element count-and-assoc)
+	     (if (cfg-precedence? element)
+		 (let ((associativity (cfg-precedence:associativity element)))
+		   (for-each
+		    (lambda (terminal)
+		      (vector-set! precedence-map (- (table-ref reverse-map
+								terminal)
+						     num-nonterminals)
+				   (car count-and-assoc)))
+		    (cfg-precedence:terminals element))
+		   (if (not (member associativity '(left right non)))
+		       (error "Unknown associativity:" associativity))
+		   (cons (+ 1 (car count-and-assoc))
+			 (cons associativity (cdr count-and-assoc))))
+		 count-and-assoc))
+	   '(1 . (right)) terminals))))
+    (values precedence-map (list->vector (reverse rev-assoc-map)))))
+
+; This is a helper function used by 'convert-grammar.  It takes a list of rules
+; and returns a vector containing their precedence values.  Along the way, it
+; makes sure that any terminal symbols found are valid and coverts them to thier
+; corresponding precedence values.  The returned vector has a dummy first
+; element to correspond to the fact that 'rule-lhs & 'rule-rhs do not use their
+; first element.
+(define (extract-rule-prec rules num-nonterminals reverse-map precedence-map)
+  (list->vector (cons #f
+   (map
+    (lambda (rule)
+      (let ((prec (cfg-rule:precedence rule)))
+	(cond ((not prec) #f)
+	      ((table-ref reverse-map prec) =>
+	       (lambda (num)
+		 (if (< num num-nonterminals)
+		     (error
+		      "Precedence cannot be based on a nonterminal symbol:"
+		      prec)
+		     (vector-ref precedence-map (- num num-nonterminals)))))
+	      (else
+	       (error "Unknown terminal symbol:" prec)))))
+    rules))))
+
+;-------------------------------------------------------------------------------
+; This function is responsible for computing the 'rule-precedence field.  The
+; vector was created in 'convert-grammar where some of the values were set.
+; These values correspond to rules whose precedence was manually specified and
+; this function does not change them.  For the rest, the precedence is set to
+; the precedence value of the last terminal-symbol in the rule or to 0 if there
+; are no terminal symbols.
+(define (compute-precedence lalr-record)
+  (let* ((num-nonterminals (lalr-constructor:num-nonterminals lalr-record))
+	 (rule-rhs (lalr-constructor:rule-rhs lalr-record))
+	 (num-rules (vector-length rule-rhs))
+	 (rule-items (lalr-constructor:rule-items lalr-record))
+	 (precedence-map (lalr-constructor:precedence-map lalr-record))
+	 (rule-prec (lalr-constructor:rule-precedence lalr-record)))
+    (let rule-loop ((rule-num 1))
+      (if (< rule-num num-rules)
+	  (if (vector-ref rule-prec rule-num)
+	      (rule-loop (+ rule-num 1))
+	      (let item-loop ((item-num (vector-ref rule-rhs rule-num))
+			      (cur-prec 0))
+		(let ((item (vector-ref rule-items item-num)))
+		  (cond ((< item -1)
+			 (vector-set! rule-prec rule-num cur-prec)
+			 (rule-loop (+ rule-num 1)))
+			((< item num-nonterminals)
+			 (item-loop (+ item-num 1) cur-prec))
+			(else
+			 (item-loop (+ item-num 1)
+				    (vector-ref precedence-map
+						(- item
+						   num-nonterminals))))))))))))
+
+;-------------------------------------------------------------------------------
+; This function is responsible for computing the 'derives field.  This is a
+; mapping from a nonterminal symbol to the list of rule-numbers of which it is
+; on the left-hand-side.
+(define (compute-derives lalr-record)
+  (let ((rule-lhs (lalr-constructor:rule-lhs lalr-record))
+	(derives (make-vector (lalr-constructor:num-nonterminals lalr-record)
+			      '())))
+    (let loop ((rule-num 1))
+      (if (< rule-num (vector-length rule-lhs))
+	  (let ((non-term (vector-ref rule-lhs rule-num)))
+	    (vector-set! derives non-term
+			 (cons rule-num (vector-ref derives non-term)))
+	    (loop (+ rule-num 1)))))
+    (let loop ((i 0)) ;<------- Is the reverse loop necessary -------------- ???
+      (if (< i (vector-length derives))
+	  (begin
+	    (vector-set! derives i (reverse (vector-ref derives i)))
+	    (loop (+ i 1)))))
+    (set-lalr-constructor:derives lalr-record derives)))
+
+;-------------------------------------------------------------------------------
+; This function is responsible for computing the 'nullable field.  This vector
+; tells whether or not a given non-terminal symbol can derive the empty string.
+;
+; Algorithm:
+; The algorithm is divided into two parts.  During the first part, the function
+; loops over every rule and determines which ones are trivially nullable (they
+; have nothing on the right side), which ones are trivially not nullable (they
+; contain terminal symbols, which ones are uncertain (they contain only
+; non-terminal symbols).  It constructs the following data structures:
+; - rule-count = A vector where each element corresponds to a rule.  For the
+;      uncertain rules, it contains the number of symbols on the right side.
+; - rule-sets = A vector where each element corresponds to a non-terminal
+;      symbol.  The values are lists of rule numbers.  The rules in question are
+;      all uncertain rules where the given non-terminal could affect whether or
+;      not the rule becomes nullable.
+; - nullable = This is the final product.  It starts off assuming that every
+;      non-terminal is not nullable and this assumption is gradually refined.
+;      By the end of the first part, the non-terminals which are trivially
+;      nullable have been marked as such.
+; - nulled-non-terms = This is a list of which non-terminals have been marked
+;      as nullable.
+;
+; The second part of algorithm loops over 'nulled-non-terms.  For each rule in
+; 'rule-sets corresponding to the non-terminal, it reduces the rule's value in
+; 'rule-count by 1.  When this value becomes 0 (meaning that every non-terminal
+; on the rule's right side is now known to be nullable), the non-terminal on
+; the rule's left-side is set to nullable.  It is then added to
+; 'nulled-non-terms so that the loop considers the effects its new status might
+; have on other rules.
+(define (compute-nullable lalr-record)
+  (let* ((num-nonterminals (lalr-constructor:num-nonterminals lalr-record))
+	 (rule-lhs (lalr-constructor:rule-lhs lalr-record))
+	 (rule-rhs (lalr-constructor:rule-rhs lalr-record))
+	 (rule-items (lalr-constructor:rule-items lalr-record))
+	 (rule-count (make-vector (vector-length rule-lhs) 0))
+	 (rule-sets (make-vector num-nonterminals '()))
+	 (nullable (make-vector num-nonterminals #f)))
+    ; Part 1
+    (let rule-loop ((rule-num 1) (nulled-non-terms '()))
+      (if (< rule-num (vector-length rule-lhs))
+	  (let ((first-item-num (vector-ref rule-rhs rule-num)))
+	    ; Check too see if the rule is trivially nullable
+	    (if (< (vector-ref rule-items first-item-num) 0)
+		(let ((symbol (vector-ref rule-lhs rule-num)))
+		  (if (not (vector-ref nullable symbol))
 		      (begin
 			(vector-set! nullable symbol #t)
-			(vector-set! squeue s2 symbol)
-			(loop (+ r 1) (+ s2 1) p))))
-		(let loop2 ((r1 r) (any-tokens #f))
-		  (let* ((symbol (vector-ref ritem r1)))
-		    (if (> symbol 0)
-			(loop2 (+ r1 1) (or any-tokens (>= symbol nvars)))
-			(if (not any-tokens)
-			    (let ((ruleno (- symbol)))
-			      (let loop3 ((r2 r) (p2 p))
-				(let ((symbol (vector-ref ritem r2)))
-				  (if (> symbol 0)
-				      (begin
-					(vector-set! rcount ruleno
-						     (+ (vector-ref rcount ruleno) 1))
-					(vector-set! relts p2
-						     (cons (vector-ref rsets symbol)
-							   ruleno))
-					(vector-set! rsets symbol p2)
-					(loop3 (+ r2 1) (+ p2 1)))
-				      (loop (+ r2 1) s2 p2)))))
-			    (loop (+ r1 1) s2 p))))))
-	    (let loop ((s1 0) (s3 s2))
-	      (if (< s1 s3)
-		  (let loop2 ((p (vector-ref rsets (vector-ref squeue s1))) (s4 s3))
-		    (if p 
-			(let* ((x (vector-ref relts p))
-			       (ruleno (cdr x))
-			       (y (- (vector-ref rcount ruleno) 1)))
-			  (vector-set! rcount ruleno y)
-			  (if (= y 0)
-			      (let ((symbol (vector-ref rlhs ruleno)))
-				(if (and (>= symbol 0)
-					 (not (vector-ref nullable symbol)))
-				    (begin
-				      (vector-set! nullable symbol #t)
-				      (vector-set! squeue s4 symbol)
-				      (loop2 (car x) (+ s4 1)))
-				    (loop2 (car x) s4)))
-			      (loop2 (car x) s4))))
-		    (loop (+ s1 1) s4)))))))))
-		  
-; Computes the value of 'firsts.
-(define (set-firsts)
-  (set! firsts (make-vector nvars '()))
+			(rule-loop (+ rule-num 1)
+				   (cons symbol nulled-non-terms)))))
+		; Check to see if the rule is trivially not-nullable
+		(let term-loop ((item-num first-item-num))
+		  (let ((symbol (vector-ref rule-items item-num)))
+		    (cond ((>= symbol num-nonterminals)
+			   (rule-loop (+ rule-num 1) nulled-non-terms))
+			  ((> symbol 0)
+			   (term-loop (+ item-num 1)))
+			  ; otherwise, construct the nullable graph
+			  (else
+			   (let nonterm-loop ((item-num first-item-num))
+			     (let ((symbol (vector-ref rule-items item-num)))
+			       (if (> symbol 0)
+				   (begin
+				     (vector-set! rule-count rule-num
+						  (+ 1 (vector-ref rule-count
+								   rule-num)))
+				     (vector-set! rule-sets symbol
+						  (cons rule-num (vector-ref
+								  rule-sets
+								  symbol)))
+				     (nonterm-loop (+ item-num 1)))
+				   (rule-loop (+ rule-num 1)
+					      nulled-non-terms))))))))))
+	  ; Part 2
+	  (let non-term-loop ((nulled-non-terms nulled-non-terms))
+	    (if (pair? nulled-non-terms)
+		(let rule-loop ((rule-list (vector-ref rule-sets
+						       (car nulled-non-terms)))
+				(nulled-non-terms (cdr nulled-non-terms)))
+		  (if (pair? rule-list)
+		      (let* ((rule-num (car rule-list))
+			     (count (- (vector-ref rule-count rule-num) 1)))
+			(vector-set! rule-count rule-num count)
+			(if (= count 0)
+			    (let ((symbol (vector-ref rule-lhs rule-num)))
+			      (if (vector-ref nullable symbol)
+				  (rule-loop (cdr rule-list) nulled-non-terms)
+				  (begin
+				    (vector-set! nullable symbol #t)
+				    (rule-loop (cdr rule-list)
+					       (cons symbol
+						     nulled-non-terms)))))
+			    (rule-loop (cdr rule-list) nulled-non-terms)))
+		      (non-term-loop nulled-non-terms)))
+		(set-lalr-constructor:nullable lalr-record nullable)))))))
 
-  ; For each non-terminal, and for each rule, if the rule begins with a
-  ; non-terminal, then that non-terminal is in the first set for the left-hand
-  ; side non-terminal.
-  (let loop ((i 0))
-    (if (< i nvars)
-	(let loop2 ((sp (vector-ref derives i)))
-	  (if (null? sp)
-	      (loop (+ i 1))
-	      (let ((sym (vector-ref ritem (vector-ref rrhs (car sp)))))
-		(if (< -1 sym nvars)
-		    (vector-set! firsts i (sinsert sym (vector-ref firsts i))))
-		(loop2 (cdr sp)))))))
+;-------------------------------------------------------------------------------
+; This function commputes the 'first-derives field.  This is a vector where each
+; element corresponds to a non-terminal symbol.  The values are sets that are
+; the union of the 'derive value for every element in the non-terminal's 'first
+; set (see 'compute-firsts).
+(define (compute-first-derives lalr-record)
+  (let* ((num-nonterminals (lalr-constructor:num-nonterminals lalr-record))
+	 (derives (lalr-constructor:derives lalr-record))
+	 (firsts (compute-firsts lalr-record))
+	 (first-derives (make-vector num-nonterminals)))
+    (let non-term-loop ((i 0))
+      (if (< i num-nonterminals)
+	  (let first-loop ((first-set (vector-ref firsts i)) (fderive '()))
+	    (if (pair? first-set)
+		(first-loop (cdr first-set)
+			    (set-union fderive
+				       (vector-ref derives (car first-set))))
+		(begin
+		  (vector-set! first-derives i fderive)
+		  (non-term-loop (+ i 1)))))))
+    (set-lalr-constructor:first-derives lalr-record first-derives)))
 
-  ; If non-terminal A is in the first set for non-terminal B, then the first set
-  ; for non-terminal B includes the first set for non-terminal A.
-  ; (transitive closure)
-  (let loop ((continue #t))
-    (if continue
-	(let loop2 ((i 0) (cont #f))
-	  (if (>= i nvars)
-	      (loop cont)
-	      (let* ((x (vector-ref firsts i))
-		     (y (let loop3 ((l x) (z x))
-			  (if (null? l)
-			      z
-			      (loop3 (cdr l)
-				     (sunion (vector-ref firsts (car l)) z))))))
-		(if (equal? x y)
-		    (loop2 (+ i 1) cont)
-		    (begin
-		      (vector-set! firsts i y)
-		      (loop2 (+ i 1) #t))))))))
+; This function computest the value of 'firsts.  The comments inside the
+; function give the best description of what this value is.
+(define (compute-firsts lalr-record)
+  (let* ((num-nonterminals (lalr-constructor:num-nonterminals lalr-record))
+	 (rule-lhs (lalr-constructor:rule-lhs lalr-record))
+	 (rule-rhs (lalr-constructor:rule-rhs lalr-record))
+	 (rule-items (lalr-constructor:rule-items lalr-record))
+	 (firsts (make-vector num-nonterminals '())))
 
-  ; The first set for a given non-terminal includes itself.  (reflexive closure)
-  (let loop ((i 0))
-    (if (< i nvars)
-	(begin
-	  (vector-set! firsts i (sinsert i (vector-ref firsts i)))
-	  (loop (+ i 1))))))
+    ; For each rule, if the right-hand-side begins with a non-terminal, then
+    ; that non-terminal is in the first set for the non-terminal on the
+    ; left-hand-side.
+    (let loop ((i 1))
+      (if (< i (vector-length rule-lhs))
+	  (let ((symbol (vector-ref rule-items (vector-ref rule-rhs i))))
+	    (if (< -1 symbol num-nonterminals)
+		(let ((lhs (vector-ref rule-lhs i)))
+		  (vector-set! firsts lhs
+			       (set-insert symbol (vector-ref firsts lhs)))))
+	    (loop (+ i 1)))))
 
-; Fonction set-fderives qui calcule un tableau de taille
-; nvars et qui donne, pour chaque non-terminal, une liste des regles pouvant
-; etre derivees a partir de ce non-terminal. (se sert de firsts)
-;
-; Google Translation:
-; Function set-fderives which calculates a table of size
-; nvars and which gives, for each not-terminal, a list of the rules being able
-; to be derivees from this not-terminal.  (is useful itself of firsts)
+    ; If non-terminal A is in the first set for non-terminal B, then the first set
+    ; for non-terminal B includes the first set for non-terminal A.
+    ; (transitive closure)
+    (let change-loop ((continue #t))
+      (if continue
+	  (let non-term-loop ((i 0) (continue #f))
+	    (if (>= i num-nonterminals)
+		(change-loop continue)
+		(let ((old-first (vector-ref firsts i)))
+		  (let union-loop ((to-do old-first) (new-first old-first))
+		    (if (pair? to-do)
+			(union-loop (cdr to-do)
+				    (set-union new-first
+					       (vector-ref firsts (car to-do))))
+			(if (equal? old-first new-first)
+			    (non-term-loop (+ i 1) continue)
+			    (begin
+			      (vector-set! firsts i new-first)
+			      (non-term-loop (+ i 1) #t))))))))))
 
-; This function calculates the value of 'fderives.
-; The value of each element is the union of all the 'derives sets for every
-; non-terminal in the corresponding element of 'firsts.
-(define (set-fderives)
-  (set! fderives (make-vector nvars #f))
+    ; The first set for a non-terminal includes itself.  (reflexive closure)
+    (let loop ((i 0))
+      (if (< i num-nonterminals)
+	  (begin
+	    (vector-set! firsts i (set-insert i (vector-ref firsts i)))
+	    (loop (+ i 1)))))
 
-  (set-firsts)
-  (let loop ((i 0))
-    (if (< i nvars)
-	(let ((x (let loop2 ((l (vector-ref firsts i)) (fd '()))
-		   (if (null? l)
-		       fd
-		       (loop2 (cdr l)
-			      (sunion (vector-ref derives (car l)) fd))))))
-	  (vector-set! fderives i x)
-	  (loop (+ i 1))))))
+    ; Return the result
+    firsts))
 
-; Fonction calculant la fermeture d'un ensemble d'items LR0
-; ou core est une liste d'items
+;-------------------------------------------------------------------------------
+; This function builds an LR(0) state machine for the grammar.  It starts by
+; putting the start state into the state queue and then it uses 'closure and
+; 'goto until no more states are generated.  The result is store in the 'states
+; field of 'lalr-record.
+(define (compute-LR0-states lalr-record)
+  (let* ((num-symbols (vector-length (lalr-constructor:symbols lalr-record)))
+	 (rule-items (lalr-constructor:rule-items lalr-record))
+	 (state-queue (make-vector (vector-length rule-items))) ;<---- This needs to be variable length --- !!!
+	 (item-map ((make-table-maker equal? (lambda (lst) (fold + 0 lst))))))
+    (vector-set! state-queue 0 (make-state 0 #f '(0)))
+    (table-set! item-map '(0) (vector-ref state-queue 0))
 
-;
-; Arguments:
-; - core = The result of calling 'core-items on a core.  This is a list of
-;          "kernel" items (see the Dragon Book) that compose an individual state
-;          in the parser.
-; Returns (I think)
-;   A complete list of items that are in this state.  Items are represented by
-; indexes into 'ritem.  The dot is considered to be before the index given.
-(define (closure core)
-  ;; Initialization
-  (let ( (ruleset (make-vector nrules #f)) )
-    (let loop ((csp core))
-      (if (not (null? csp))
-	  (let ((sym (vector-ref ritem (car csp))))
-	    (if (< -1 sym nvars)
-		(let loop2 ((dsp (vector-ref fderives sym)))
-		  (if (not (null? dsp))
-		      (begin
-			(vector-set! ruleset (car dsp) #t)
-			(loop2 (cdr dsp))))))
-	    (loop (cdr csp)))))
+    (let state-loop ((cur-state 0) (last-state 1))
+      (if (< cur-state last-state)
+	  (let* ((state (vector-ref state-queue cur-state))
+		 (items (compute-closure state lalr-record))
+		 (next-states (compute-goto items num-symbols rule-items)))
+	    (save-reductions state items rule-items)
+	    (let next-loop ((symbol (- num-symbols 1))
+			    (last-state last-state)
+			    (shifts '()))
+	      (if (>= symbol 0) ;<-------- Can we go the other direction --- ???
+		  (let ((next-items (vector-ref next-states symbol)))
+		    (cond ((null? next-items)
+			   (next-loop (- symbol 1) last-state shifts))
+			  ((table-ref item-map next-items) =>
+			   (lambda (state)
+			     (next-loop (- symbol 1) last-state
+					(cons state shifts))))
+			  (else
+			   (let ((new-state (make-state last-state symbol
+							next-items)))
+			     (vector-set! state-queue last-state new-state)
+			     (table-set! item-map next-items new-state)
+			     (next-loop (- symbol 1) (+ last-state 1)
+					(cons new-state shifts))))))
+		  (begin
+		    (set-state:shifts state (reverse shifts))
+		    (state-loop (+ cur-state 1) last-state)))))
+	  (set-lalr-constructor:states lalr-record
+				       (vector-copy state-queue last-state))))))
 
-    (let loop ((ruleno 1) (csp core) (itemsetv '())) ; ruleno = 0
-      (if (< ruleno nrules)
-	  (if (vector-ref ruleset ruleno)
-	      (let ((itemno (vector-ref rrhs ruleno)))
-		(let loop2 ((c csp) (itemsetv2 itemsetv))
-		  (if (and (pair? c)
-			   (< (car c) itemno)) ;<--------------------------- ???
-		      (loop2 (cdr c) (cons (car c) itemsetv2))
-		      (loop (+ ruleno 1) c (cons itemno itemsetv2)))))
-	      (loop (+ ruleno 1) csp itemsetv))
-	  (let loop2 ((c csp) (itemsetv2 itemsetv))
-	    (if (pair? c)
-		(loop2 (cdr c) (cons (car c) itemsetv2))
-		(reverse itemsetv2)))))) )
+; This function takes a list of "kernel" items from 'state and returns the
+; complete list of items that represent that state.  The new items will all have
+; the dot at the front of the rule.  For example, if the parser can be in the
+; state "A -> a B c . D" then it can also be in the state "D -> . f G".
+(define (compute-closure state lalr-record)
+  (let ((num-nonterminals (lalr-constructor:num-nonterminals lalr-record))
+	(rule-rhs (lalr-constructor:rule-rhs lalr-record))
+	(rule-items (lalr-constructor:rule-items lalr-record))
+	(first-derives (lalr-constructor:first-derives lalr-record))
+	(item-set (state:items state)))
+    (let item-loop ((items item-set) (closure-set item-set))
+      (if (pair? items)
+	  (let ((symbol (vector-ref rule-items (car items))))
+	    (if (< -1 symbol num-nonterminals)
+		(let first-loop ((first (vector-ref first-derives symbol))
+				 (closure-set closure-set))
+		  (if (pair? first)
+		      (first-loop (cdr first)
+				  (set-insert (vector-ref rule-rhs (car first))
+					      closure-set))
+		      (item-loop (cdr items) closure-set)))
+		(item-loop (cdr items) closure-set)))
+	  closure-set))))
 
-; This function is called by 'generate-states.
-(define (allocate-storage)
-  (set! kernel-base (make-vector nsyms 0))
-  (set! kernel-end  (make-vector nsyms #f)))
+; This function takes a list of items (which represent a state) and returns a
+; vector.  The vector is indexed by terminal and non-terminal symbols and the
+; values are new lists of items.  These represent (possibly new) states which
+; can be reached by shifting the corresponding symbol.
+(define (compute-goto items num-symbols rule-items)
+  (let ((next (make-vector num-symbols '())))
+    (let loop ((items items))
+      (if (pair? items)
+	  (let* ((item (car items))
+		 (symbol (vector-ref rule-items item)))
+	    (if (>= symbol 0)
+		(vector-set! next symbol
+			     (cons (+ item 1) (vector-ref next symbol))))
+	    (loop (cdr items)))))
+    (let loop ((i 0))
+      (if (< i num-symbols)
+	  (begin
+	    (vector-set! next i (reverse (vector-ref next i)))
+	    (loop (+ i 1)))))
+    next))
 
-; This function is called by 'generate-states to do some initial setup.
-(define (initialize-states)
-  (let ((p (new-core)))
-    (set-core-number! p 0)
-    (set-core-acc-sym! p #f)
-    (set-core-nitems! p 1)
-    (set-core-items! p '(0))
+; This fuction figures out which reductions are possible in the given state and
+; then saves them in the state record.
+(define (save-reductions state items rule-items)
+  (set-state:reductions state
+			(let loop ((items items))
+			  (if (null? items)
+			      '()
+			      (let ((item (vector-ref rule-items (car items))))
+				(if (< item 0)
+				    (cons (- item) (loop (cdr items)))
+				    (loop (cdr items))))))))
 
-    (set! first-state (list p))
-    (set! last-state first-state)
-    (set! nstates 1)))
-
-; This function constructs the LR(0) parser.
-(define (generate-states)
-  (allocate-storage)
-  (set-fderives)
-  (initialize-states)
-  (let loop ((this-state first-state))
-    (if (pair? this-state)
-	(let* ((x (car this-state))
-	       (is (closure (core-items x))))
-
-	  (save-reductions x is)
-	  (new-itemsets is)
-	  (append-states)
-	  (if (> nshifts 0)
-	      (save-shifts x))
-	  (loop (cdr this-state))))))
-
-; This function is roughly the "goto" operation from the Dragon Book's
-; description of how to construct an LR(0) parser.  It takes a list of items as
-; input and generates new states based on those items.
-;
-; Arguments
-; - itemset = The list of items that represent a given state in the LR(0)
-;             parser.  The elements are indexes into 'ritem with the "dot"
-;             occuring right before the index in question.
-; Returns:
-; Nothing directly.  It has the following side-effects:
-; - Sets 'shift-symbol to be the list of symbols that will cause a shift in the
-;   given state.
-; - Sets 'nshifts to be (length shift-symbol)
-; - Modifies 'kernel-base so that the indexes corresponding to the elements of
-;   'shift-symbol contain lists of indexes into 'ritem.  These lists represent
-;   the "kernel" (see the Dragon Book) items of the state gotten to be shifting
-;   the given symbol in this state.  The elements of 'kernel-base that do not
-;   correspond to items in 'shift-symbol are modified.
-; - Modifies 'kernel-end to continue its relationship with 'kernel-base.
-(define (new-itemsets itemset)
-  ;; - Initialization
-  (set! shift-symbol '())
-  (let loop ((i 0))
-    (if (< i nsyms)
-	(begin
-	  (vector-set! kernel-end i '())
-	  (loop (+ i 1)))))
-
-  (let loop ((isp itemset))
-    (if (pair? isp)
-	(let* ((i (car isp))
-	       (sym (vector-ref ritem i)))
-	  (if (>= sym 0)
-	      (begin
-		(set! shift-symbol (sinsert sym shift-symbol))
-		(let ((x (vector-ref kernel-end sym)))
-		  (if (null? x)
-		      (begin
-			(vector-set! kernel-base sym (cons (+ i 1) x))
-			(vector-set! kernel-end sym (vector-ref kernel-base sym)))
-		      (begin
-			(set-cdr! x (list (+ i 1)))
-			(vector-set! kernel-end sym (cdr x)))))))
-	  (loop (cdr isp)))))
-
-  (set! nshifts (length shift-symbol)))
-
-; This function takes a list of items and returns the number of the
-; corresponding "core".  If the "core" that corresponds to the list does not
-; exist, then it is created.
-;
-; Arguments:
-; - sym = An index into 'kernel-base.  (vector-ref kernel-base sym) is the list
-;         of items.
-; Returns:
-;   The "core number" corresponding to the given state.
-(define (get-state sym)
-  (let* ((isp  (vector-ref kernel-base sym))
-	 (n    (length isp))
-	 (key  (let loop ((isp1 isp) (k 0))
-		 (if (null? isp1)
-		     (modulo k STATE-TABLE-SIZE)
-		     (loop (cdr isp1) (+ k (car isp1))))))
-	 (sp   (vector-ref state-table key)))
-    (if (null? sp)
-	(let ((x (new-state sym)))
-	  (vector-set! state-table key (list x))
-	  (core-number x))
-	(let loop ((sp1 sp))
-	  (if (and (= n (core-nitems (car sp1)))
-		   (let loop2 ((i1 isp) (t (core-items (car sp1)))) 
-		     (if (and (pair? i1) 
-			      (= (car i1)
-				 (car t)))
-			 (loop2 (cdr i1) (cdr t))
-			 (null? i1))))
-	      (core-number (car sp1))
-	      (if (null? (cdr sp1))
-		  (let ((x (new-state sym)))
-		    (set-cdr! sp1 (list x))
-		    (core-number x))
-		  (loop (cdr sp1))))))))
-
-; This function creates a new "core" symbol (and thus a new state) to represent
-; the given list of items.
-;
-; Arguments:
-; - sym = An index into 'kernel-base.  The list of items is taken from there.
-; Returns:
-;   The new "core" record.  It also modifies the values of 'last-state (and thus
-; 'first-state), 'nstates, and possibly 'final-state.
-(define (new-state sym)
-  (let* ((isp  (vector-ref kernel-base sym))
-	 (n    (length isp))
-	 (p    (new-core)))
-    (set-core-number! p nstates)
-    (set-core-acc-sym! p sym)
-    (if (= sym nvars) (set! final-state nstates))
-    (set-core-nitems! p n)
-    (set-core-items! p isp)
-    (set-cdr! last-state (list p))
-    (set! last-state (cdr last-state))
-    (set! nstates (+ nstates 1))
-    p))
-
-; Uses the list in 'shift-symbol to construct a list in 'shift-set that contains
-; the new "core" records (and thus states) that were represented by
-; 'shift-symbol.
-(define (append-states)
-  (set! shift-set
-	(let loop ((l (reverse shift-symbol)))
-	  (if (null? l)
-	      '()
-	      (cons (get-state (car l)) (loop (cdr l)))))))
-
-; This function takes a "core" record as an argument and creates a new "shift"
-; record for it.  This function uses the values of 'nshifts and 'shift-set and
-; it assumes that 'nshifts is greater than zero.  It adds the newly created
-; "shift" record to the shift list ('first-shift & 'last-shift).
-(define (save-shifts core)
-  (let ((p (new-shift)))
-	(set-shift-number! p (core-number core))
-	(set-shift-nshifts! p nshifts)
-	(set-shift-shifts! p shift-set)
-	(if last-shift
-	    (begin
-	      (set-cdr! last-shift (list p))
-	      (set! last-shift (cdr last-shift)))
-	    (begin
-	      (set! first-shift (list p))
-	      (set! last-shift first-shift)))))
-
-; This function takes a state and create a new "red" record for it if needed.
-;
-; Arguments
-; - core = The "core" record for the state in question.
-; - itemset = The (complete) list of items in the state in question.  This is
-;             needed because some "nonkernel items" (see the Dragon Book) might
-;             make reductions on the empty string possible.
-; Returns:
-; Nothing - It adds the new record to the the reduction-list ('first-reduction &
-; 'last-reduction).
-(define (save-reductions core itemset)
-  (let ((rs (let loop ((l itemset))
-	      (if (null? l)
-		  '()
-		  (let ((item (vector-ref ritem (car l))))
-		    (if (< item 0)
-			(cons (- item) (loop (cdr l)))
-			(loop (cdr l))))))))
-    (if (pair? rs)
-	(let ((p (new-red)))
-	  (set-red-number! p (core-number core))
-	  (set-red-nreds!  p (length rs))
-	  (set-red-rules!  p rs)
-	  (if last-reduction
-	      (begin
-		(set-cdr! last-reduction (list p))
-		(set! last-reduction (cdr last-reduction)))
-	      (begin
-		(set! first-reduction (list p))
-		(set! last-reduction first-reduction)))))))
-
-
-;; --
-
-; This function computes the LALR Look-Ahead Sets as described in the DeRemer
-; and Pennello paper.
-(define (lalr)
-  (set! token-set-size (+ 1 (quotient nterms (BITS-PER-WORD))))
-  (set-accessing-symbol)
-  (set-shift-table)
-  (set-reduction-table)
-  (set-max-rhs)
-  (initialize-LA)
-  (set-goto-map)
-  (initialize-F)
-  (build-relations)
-  (digraph includes)
-  (compute-lookaheads))
-
-; This function computes the value of 'acces-symbol
-(define (set-accessing-symbol)
-  (set! acces-symbol (make-vector nstates #f))
-  (let loop ((l first-state))
-    (if (pair? l)
-	(let ((x (car l)))
-	  (vector-set! acces-symbol (core-number x) (core-acc-sym x))
-	  (loop (cdr l))))))
-
-; This function computes the value of 'shift-table.
-(define (set-shift-table)
-  (set! shift-table (make-vector nstates #f))
-  (let loop ((l first-shift))
-    (if (pair? l)
-	(let ((x (car l)))
-	  (vector-set! shift-table (shift-number x) x)
-	  (loop (cdr l))))))
-
-; This function computes the value of 'reduction-table.
-(define (set-reduction-table)
-  (set! reduction-table (make-vector nstates #f))
-  (let loop ((l first-reduction))
-    (if (pair? l)
-	(let ((x (car l)))
-	  (vector-set! reduction-table (red-number x) x)
-	  (loop (cdr l))))))
-
-; This function computes the value of 'maxrhs.
-(define (set-max-rhs)
-  (let loop ((p 0) (curmax 0) (length 0))
-    (let ((x (vector-ref ritem p)))
-      (if x
-	  (if (>= x 0)
-	      (loop (+ p 1) curmax (+ length 1))
-	      (loop (+ p 1) (max curmax length) 0))
-	  (set! maxrhs curmax)))))
-
-; This function computes the values of 'consistent, 'lookaheads, and 'LAruleno.
-; It also allocates the initial values of 'LA and 'lookback.
-(define (initialize-LA)
-  (set! consistent (make-vector nstates #f))
-  (set! lookaheads (make-vector (+ nstates 1) #f))
-
-  (let loop ((count 0) (i 0))
-    (if (< i nstates)
-	(begin
-	  (vector-set! lookaheads i count)
-	  (let ((rp (vector-ref reduction-table i))
-		(sp (vector-ref shift-table i)))
-	    (if (and rp
-		     (or (> (red-nreds rp) 1)
-			 (and sp
-			      (not
-			       (< (vector-ref acces-symbol
-					      (last (shift-shifts sp)))
-				  nvars)))))
-		(loop (+ count (red-nreds rp)) (+ i 1))
+;-------------------------------------------------------------------------------
+; This function computes the 'consistent and 'reduction-map fields.
+(define  (compute-consistent-and-reduction-map lalr-record)
+  (let* ((num-nonterminals (lalr-constructor:num-nonterminals lalr-record))
+	 (states (lalr-constructor:states lalr-record))
+	 (num-states (vector-length states))
+	 (consistent (make-vector num-states #f))
+	 (reduction-map (make-vector (+ num-states 1))))
+    (let loop ((count 0) (i 0))
+      (if (< i num-states)
+	  (let* ((state (vector-ref states i))
+		 (shifts (state:shifts state))
+		 (reductions (state:reductions state))
+		 (num-reductions (length reductions)))
+	    (vector-set! reduction-map i count)
+	    (if (and (> num-reductions 0)
+		     (or (> num-reductions 1)
+			 (and (not (null? shifts))
+			      (not (< (state:access-symbol (last shifts))
+				      num-nonterminals)))))
+		(loop (+ count num-reductions) (+ i 1))
 		(begin
 		  (vector-set! consistent i #t)
-		  (loop count (+ i 1))))))
+		  (loop count (+ i 1)))))
+	  (vector-set! reduction-map num-states count)))
+    (set-lalr-constructor:consistent lalr-record consistent)
+    (set-lalr-constructor:reduction-map lalr-record reduction-map)))
 
-	(begin
-	  (vector-set! lookaheads nstates count)
-	  (let ((c (max count 1)))
-	    (set! LA (make-vector c #f))
-	    (do ((j 0 (+ j 1))) ((= j c)) (vector-set! LA j (new-set token-set-size)))
-	    (set! LAruleno (make-vector c -1))
-	    (set! lookback (make-vector c #f)))
-	  (let loop ((i 0) (np 0))
-	    (if (< i nstates)
-		(if (vector-ref consistent i)
-		    (loop (+ i 1) np)
-		    (let ((rp (vector-ref reduction-table i)))
-		      (if rp
-			  (let loop2 ((j (red-rules rp)) (np2 np))
-			    (if (null? j)
-				(loop (+ i 1) np2)
-				(begin
-				  (vector-set! LAruleno np2 (car j))
-				  (loop2 (cdr j) (+ np2 1)))))
-			  (loop (+ i 1) np))))))))))
+;-------------------------------------------------------------------------------
+; This function computes the 'reduction-rule-num field.
+(define (compute-reduction-rule-num lalr-record)
+  (let* ((states (lalr-constructor:states lalr-record))
+	 (num-states (vector-length states))
+	 (consistent (lalr-constructor:consistent lalr-record))
+	 (reduction-map (lalr-constructor:reduction-map lalr-record))
+	 (reduction-rule-num (make-vector
+			      (vector-ref reduction-map
+					  (- (vector-length reduction-map)
+					     1)))))
+    (let state-loop ((state-num 0) (rule-count 0))
+      (if (< state-num num-states)
+	  (if (vector-ref consistent state-num)
+	      (state-loop (+ state-num 1) rule-count)
+	      (let rule-loop ((reductions (state:reductions
+					   (vector-ref states state-num)))
+			      (rule-count rule-count))
+		(if (null? reductions)
+		    (state-loop (+ state-num 1) rule-count)
+		    (begin
+		      (vector-set! reduction-rule-num rule-count
+				   (car reductions))
+		      (rule-loop (cdr reductions) (+ rule-count 1))))))))
+    (set-lalr-constructor:reduction-rule-num lalr-record reduction-rule-num)))
 
-; This function constructs the value of 'goto-map, 'from-state, and 'to-state.
-(define (set-goto-map)
-  (set! goto-map (make-vector (+ nvars 1) 0))
-  (let ((temp-map (make-vector (+ nvars 1) 0)))
-    (let loop ((ng 0) (sp first-shift))
-      (if (pair? sp)
-	  (let loop2 ((i (reverse (shift-shifts (car sp)))) (ng2 ng))
-	    (if (pair? i)
-		(let ((symbol (vector-ref acces-symbol (car i))))
-		  (if (< symbol nvars)
+;-------------------------------------------------------------------------------
+; This function computes the 'goto-map, 'from-state, and 'to-state fields.
+; Basically, it enumerates all the non-terminal transitions ("gotos") in the
+; LR(0) state machine.  'from-state & 'to-state are the numbers of the starting
+; and destination state for each transition.  All the non-terminal transitions
+; are listed together.  'goto-map maps a given non-terminal to the starting
+; point in 'from-state & 'to-state for that non-terminal.
+(define (compute-goto-map lalr-record)
+  (let* ((num-nonterminals (lalr-constructor:num-nonterminals lalr-record))
+	 (states (lalr-constructor:states lalr-record))
+	 (num-states (vector-length states))
+	 (goto-map (make-vector (+ num-nonterminals 1) 0)))
+
+    ; Calculate the number of "gotos" each non-terminal is involved in
+    (let state-loop ((state-num 0) (num-gotos 0))
+      (if (< state-num num-states)
+	  (let shift-loop ((shift-states (state:shifts (vector-ref states
+								   state-num)))
+			   (num-gotos num-gotos))
+	    (if (null? shift-states)
+		(state-loop (+ state-num 1) num-gotos)
+		(let ((symbol (state:access-symbol (car shift-states))))
+		  (if (< symbol num-nonterminals)
 		      (begin
-			(vector-set! goto-map symbol 
+			(vector-set! goto-map symbol
 				     (+ 1 (vector-ref goto-map symbol)))
-			(loop2 (cdr i) (+ ng2 1)))
-		      (loop2 (cdr i) ng2)))
-		(loop ng2 (cdr sp))))
+			(shift-loop (cdr shift-states) (+ num-gotos 1)))
+		      (shift-loop (cdr shift-states) num-gotos)))))))
 
-	  (let loop ((k 0) (i 0))
-	    (if (< i nvars)
-		(begin
-		  (vector-set! temp-map i k)
-		  (loop (+ k (vector-ref goto-map i)) (+ i 1)))
+    ; Covert the individual sums into indexes into 'from-state and 'to-state
+    (let sum-loop ((i 0) (sum 0))
+      (if (< i num-nonterminals)
+	  (let ((x (vector-ref goto-map i)))
+	    (vector-set! goto-map i sum)
+	    (sum-loop (+ i 1) (+ sum x)))
+	  (vector-set! goto-map num-nonterminals sum)))
 
-		(begin
-		  (do ((i 0 (+ i 1)))
-		      ((>= i nvars))
-		    (vector-set! goto-map i (vector-ref temp-map i)))
+    ; Compute 'from-state and 'to-state
+    (let* ((temp-map (vector-copy goto-map))
+	   (from-state (make-vector (vector-ref temp-map num-nonterminals)))
+	   (to-state (make-vector (vector-length from-state))))
+      (let state-loop ((state-num 0))
+	(if (< state-num num-states)
+	    (let shift-loop ((shift-states (state:shifts
+					    (vector-ref states state-num))))
+	      (if (null? shift-states)
+		  (state-loop (+ state-num 1))
+		  (let* ((state (car shift-states))
+			 (to-state-num (state:number state))
+			 (symbol (state:access-symbol state)))
+		    (if (< symbol num-nonterminals)
+			(let ((i (vector-ref temp-map symbol)))
+			  (vector-set! temp-map symbol (+ i 1))
+			  (vector-set! from-state i state-num)
+			  (vector-set! to-state i to-state-num)))
+		    (shift-loop (cdr shift-states)))))))
 
-		  (set! ngotos ng)
-		  (vector-set! goto-map nvars ngotos)
-		  (vector-set! temp-map nvars ngotos)
-		  (set! from-state (make-vector ngotos #f))
-		  (set! to-state (make-vector ngotos #f))
-		  
-		  (do ((sp first-shift (cdr sp)))
-		      ((null? sp))
-		    (let* ((x (car sp))
-			   (state1 (shift-number x)))
-		      (do ((i (shift-shifts x) (cdr i)))
-			  ((null? i))
-			(let* ((state2 (car i))
-			       (symbol (vector-ref acces-symbol state2)))
-			  (if (< symbol nvars)
-			      (let ((k (vector-ref temp-map symbol)))
-				(vector-set! temp-map symbol (+ k 1))
-				(vector-set! from-state k state1)
-				(vector-set! to-state k state2))))))))))))))
+      ; Finish up
+      (set-lalr-constructor:goto-map lalr-record goto-map)
+      (set-lalr-constructor:from-state lalr-record from-state)
+      (set-lalr-constructor:to-state lalr-record to-state))))
 
+; This is a helper function used in the computation of 'reads and 'includes.
+; When given a state and a non-terminal symbol, it returns the number of that
+; particular "non-terminal transition."
+(define (map-goto state-num symbol lalr-record)
+  (let ((goto-map (lalr-constructor:goto-map lalr-record))
+	(from-state (lalr-constructor:from-state lalr-record)))
+    (let loop ((low (vector-ref goto-map symbol))
+	       (high (- (vector-ref goto-map (+ symbol 1)) 1)))
+      (if (> low high)
+	  (error "Internal Error: map-goto can't map.")
+	  (let* ((middle (quotient (+ low high) 2))
+		 (middle-state-num (vector-ref from-state middle)))
+	    (cond ((= middle-state-num state-num)
+		   middle)
+		  ((< middle-state-num state-num)
+		   (loop (+ middle 1) high))
+		  (else
+		   (loop low (- middle 1)))))))))
 
-(define (map-goto state symbol)
-  (let loop ((low (vector-ref goto-map symbol))
-	     (high (- (vector-ref goto-map (+ symbol 1)) 1)))
-    (if (> low high)
-	(begin
-	  (display (list "Error in map-goto" state symbol)) (newline)
-	  0)
-	(let* ((middle (quotient (+ low high) 2))
-	       (s (vector-ref from-state middle)))
-	  (cond
-	   ((= s state)
-	    middle)
-	   ((< s state)
-	    (loop (+ middle 1) high))
-	   (else
-	    (loop low (- middle 1))))))))
-
-; This function implements parts B - D of the algorithm under section 6 of the
-; DeRemer and Pennello paper.
-;
-; As a side effect, it computes the value of 'F.
-(define (initialize-F)
-  (set! F (make-vector ngotos #f))
-  (do ((i 0 (+ i 1))) ((= i ngotos)) (vector-set! F i (new-set token-set-size)))
-
-  (let ((reads (make-vector ngotos #f)))
-
-    (let loop ((i 0) (rowp 0))
-      (if (< i ngotos)
-	  (let* ((rowf (vector-ref F rowp))
-		 (stateno (vector-ref to-state i))
-		 (sp (vector-ref shift-table stateno)))
-	    (if sp
-		(let loop2 ((j (shift-shifts sp)) (edges '()))
-		  (if (pair? j)
-		      (let ((symbol (vector-ref acces-symbol (car j))))
-			(if (< symbol nvars)
-			    (if (vector-ref nullable symbol)
-				(loop2 (cdr j) (cons (map-goto stateno symbol) 
-						     edges))
-				(loop2 (cdr j) edges))
-			    (begin
-			      (set-bit rowf (- symbol nvars))
-			      (loop2 (cdr j) edges))))
-		      (if (pair? edges)
-			  (vector-set! reads i (reverse edges))))))
-	      (loop (+ i 1) (+ rowp 1)))))
-    (digraph reads)))
-
-; Helper function for 'build-relations.
-(define (add-lookback-edge stateno ruleno gotono)
-  (let ((k (vector-ref lookaheads (+ stateno 1))))
-    (let loop ((found #f) (i (vector-ref lookaheads stateno)))
-      (if (and (not found) (< i k))
-	  (if (= (vector-ref LAruleno i) ruleno)
-	      (loop #t i)
-	      (loop found (+ i 1)))
-
-	  (if (not found)
-	      (begin (display "Error in add-lookback-edge : ")
-		     (display (list stateno ruleno gotono)) (newline))
-	      (vector-set! lookback i
-			   (cons gotono (vector-ref lookback i))))))))
-
-; Helper function for 'build-relations.
-(define (transpose r-arg n)
-  (let ((new-end (make-vector n #f))
-	(new-R  (make-vector n #f)))
-    (do ((i 0 (+ i 1))) 
-	((= i n))
-      (let ((x (list 'bidon)))
-	(vector-set! new-R i x)
-	(vector-set! new-end i x)))
-    (do ((i 0 (+ i 1)))
-	((= i n))
-      (let ((sp (vector-ref r-arg i)))
-	(if (pair? sp)
-	    (let loop ((sp2 sp))
-	      (if (pair? sp2)
-		  (let* ((x (car sp2))
-			 (y (vector-ref new-end x)))
-		    (set-cdr! y (cons i (cdr y)))
-		    (vector-set! new-end x (cdr y))
-		    (loop (cdr sp2))))))))
-    (do ((i 0 (+ i 1)))
-	((= i n))
-      (vector-set! new-R i (cdr (vector-ref new-R i))))
-    
-    new-R))
-
-
-; This function does part E.
-;
-; It computes the value of 'includes and 'lookback.
-(define (build-relations)
-  (let ( (get-state (lambda (stateno symbol)
-		      (let loop ((j (shift-shifts (vector-ref shift-table stateno)))
-				 (stno stateno))
-			(if (null? j)
-			    stno
-			    (let ((st2 (car j)))
-			      (if (= (vector-ref acces-symbol st2) symbol)
-				  st2
-				  (loop (cdr j) st2))))))) )
-    (set! includes (make-vector ngotos #f))
-    (do ((i 0 (+ i 1)))
-	((= i ngotos))
-      (let ((state1 (vector-ref from-state i))
-	    (symbol1 (vector-ref acces-symbol (vector-ref to-state i))))
-	(let loop ((rulep (vector-ref derives symbol1))
-		   (edges '()))
-	  (if (pair? rulep)
-	      (let ((*rulep (car rulep)))
-		(let loop2 ((rp (vector-ref rrhs *rulep))
-			    (stateno state1)
-			    (states (list state1)))
-		  (let ((*rp (vector-ref ritem rp)))
-		    (if (> *rp 0)
-			(let ((st (get-state stateno *rp)))
-			  (loop2 (+ rp 1) st (cons st states)))
+;-------------------------------------------------------------------------------
+; This function computes the 'reads field and the DR value.  DR is stored in the
+; 'follow field where it will serve as the initial value when 'compute-follow is
+; called.
+(define (compute-DR-and-reads lalr-record)
+  (let* ((num-nonterminals (lalr-constructor:num-nonterminals lalr-record))
+	 (nullable (lalr-constructor:nullable lalr-record))
+	 (states (lalr-constructor:states lalr-record))
+	 (to-state (lalr-constructor:to-state lalr-record))
+	 (num-gotos (vector-length to-state))
+	 (DR (make-vector num-gotos 0))
+	 (reads (make-vector num-gotos)))
+    (let goto-loop ((goto-num 0))
+      (if (< goto-num num-gotos)
+	  (let ((state-num (vector-ref to-state goto-num)))
+	    (let shift-loop ((shift-states (state:shifts
+					    (vector-ref states state-num)))
+			     (gotos '()))
+	      (if (pair? shift-states)
+		  (let ((symbol (state:access-symbol (car shift-states))))
+		    (if (< symbol num-nonterminals)
+			(if (vector-ref nullable symbol)
+			    (shift-loop (cdr shift-states)
+					(cons (map-goto state-num symbol)
+					      gotos))
+			    (shift-loop (cdr shift-states) gotos))
 			(begin
-			  
-			  (if (not (vector-ref consistent stateno))
-			      (add-lookback-edge stateno *rulep i))
-			  
-			  (let loop2 ((done #f) 
-				      (stp (cdr states))
-				      (rp2 (- rp 1))
-				      (edgp edges))
-			    (if (not done)
-				(let ((*rp (vector-ref ritem rp2)))
-				  (if (< -1 *rp nvars)
-				      (loop2 (not (vector-ref nullable *rp))
-					     (cdr stp)
-					     (- rp2 1)
-					     (cons (map-goto (car stp) *rp) edgp))
-				      (loop2 #t stp rp2 edgp)))
-				
-				(loop (cdr rulep) edgp))))))))
-	      (vector-set! includes i edges)))))
-    (set! includes (transpose includes ngotos))) )
-			
-(define (compute-lookaheads)
-  (let ((n (vector-ref lookaheads nstates)))
-    (let loop ((i 0))
-      (if (< i n)
-	  (let loop2 ((sp (vector-ref lookback i)))
-	    (if (pair? sp)
-		(let ((LA-i (vector-ref LA i))
-		      (F-j  (vector-ref F (car sp))))
-		  (bit-union LA-i F-j token-set-size)
-		  (loop2 (cdr sp)))
-		(loop (+ i 1))))))) )
+			  (vector-set! DR goto-num
+				       (set-bit (vector-ref DR goto-num)
+						(- symbol num-nonterminals)))
+			  (shift-loop (cdr shift-states) gotos))))
+		  (vector-set! reads goto-num (reverse gotos)))) ;< --- Is this necessary --- ???
+	    (goto-loop (+ goto-num 1)))))
+    (set-lalr-constructor:follow lalr-record DR)
+    (set-lalr-constructor:reads lalr-record reads)))
 
-; This is a helper function for 'digraph.
-(define (traverse i INDEX R VERTICES top)
-  (let ( (infinity (+ ngotos 2)) )	  
-    (set! top (+ 1 top))
-    (vector-set! VERTICES top i)
-    (let ((height top))
-	(vector-set! INDEX i height)
-	(let ((rp (vector-ref R i)))
-	  (if (pair? rp)
-	      (let loop ((rp2 rp))
-		(if (pair? rp2)
-		    (let ((j (car rp2)))
-		      (if (= 0 (vector-ref INDEX j))
-			  (traverse j INDEX R VERTICES top))
-		      (if (> (vector-ref INDEX i) 
-			     (vector-ref INDEX j))
-			  (vector-set! INDEX i (vector-ref INDEX j)))
-		      (let ((F-i (vector-ref F i))
-			    (F-j (vector-ref F j)))
-			(bit-union F-i F-j token-set-size))
-		      (loop (cdr rp2))))))
-	  (if (= (vector-ref INDEX i) height)
-	      (let loop ()
-		(let ((j (vector-ref VERTICES top)))
-		  (set! top (- top 1))
-		  (vector-set! INDEX j infinity)
-		  (if (not (= i j))
-		      (begin
-			(bit-union (vector-ref F i) 
-				   (vector-ref F j)
-				   token-set-size)
-			(loop)))))))))) 
+;-------------------------------------------------------------------------------
+(define (compute-includes-and-lookback lalr-record)
+  (let* ((num-nonterminals (lalr-constructor:num-nonterminals lalr-record))
+	 (rule-rhs (lalr-constructor:rule-rhs lalr-record))
+	 (rule-items (lalr-constructor:rule-items lalr-record))
+	 (derives (lalr-constructor:derives lalr-record))
+	 (nullable (lalr-constructor:nullable lalr-record))
+	 (states (lalr-constructor:states lalr-record))
+	 (consistent (lalr-constructor:consistent lalr-record))
+	 (to-state (lalr-constructor:to-state lalr-record))
+	 (from-state (lalr-constructor:from-state lalr-record))
+	 (num-gotos (vector-length to-state))
+	 (reduction-map (lalr-constructor:reduction-map lalr-record))
+	 (reduction-rule-num (lalr-constructor:reduction-rule-num lalr-record))
+	 (includes-tp (make-vector num-gotos))
+	 (lookback (make-vector (vector-length reduction-rule-num) '())))
+    (let goto-loop ((goto-num 0))
+      (if (< goto-num num-gotos)
+	  (let ((state-num1 (vector-ref from-state goto-num))
+		(symbol1 (state:access-symbol (vector-ref states (vector-ref to-state goto-num)))))
+	    (let rule-loop ((rules (vector-ref derives symbol1))
+			    (edges '()))
+	      (if (pair? rules)
+		  (let forward-loop ((item-num (vector-ref rule-rhs (car rules)))
+				     (state (vector-ref states state-num1))
+				     (state-nums (list state-num1)))
+		    (let ((symbol (vector-ref rule-items item-num)))
+		      (if (> symbol 0) ;<--------------------------- the start-symbol can be 0 --- ???
+			  (let state-loop ((shifts (state:shifts state)))
+			    (cond ((null? shifts)
+				   (error "Internal Error: Could not find shift symbol.")) ;<------------- ???
+				  ((= (state:access-symbol (car shifts)) symbol)
+				   (forward-loop (+ item-num 1) (car shifts) (cons (state:number (car shifts)) state-nums)))
+				  (else
+				   (state-loop (cdr shifts)))))
+			  (begin
+			    (if (not (vector-ref consistent (state:number state)))
+				(let ((max (vector-ref reduction-map (+ (state:number state) 1))))
+				  (let reduction-loop ((red-num (vector-ref reduction-map (state:number state))))
+				    (cond ((>= red-num max)
+					   (error "Internal Error: Could not find reduction number."))
+					  ((= (vector-ref reduction-rule-num red-num) (car rules))
+					   (vector-set! lookback red-num (cons goto-num (vector-ref lookback red-num))))
+					  (else
+					   (reduction-loop (+ red-num 1)))))))
+			    (let reverse-loop ((done #f)
+					       (state-nums (cdr state-nums))
+					       (item-num (- item-num 1))
+					       (edges edges))
+			      (if done
+				  (rule-loop (cdr rules) edges)
+				  (let ((symbol (vector-ref rule-items item-num)))
+				    (if (< -1 symbol num-nonterminals)
+					(reverse-loop (not (vector-ref nullable symbol))
+						      (cdr state-nums)
+						      (- item-num 1)
+						      (cons (map-goto (car state-nums) symbol lalr-record) edges))
+					(reverse-loop #t state-nums item-num edges)))))))))
+		  (vector-set! includes-tp goto-num edges)))
+	    (goto-loop (+ goto-num 1)))))
+    (set-lalr-constructor:lookback lalr-record lookback)
+    (set-lalr-constructor:includes lalr-record (transpose includes-tp))))
 
-; This is the Digraph function from section 4 of the DeRemer and Pennello paper.
-(define (digraph relation)
-  (let ( (INDEX (make-vector (+ ngotos 1) 0))
-	  (R relation) 
-	  (VERTICES (make-vector (+ ngotos 1) 0))
-	  (top 0) )
-    (let loop ((i 0))
-      (if (< i ngotos)
+;
+(define (transpose includes-tp)
+  (let* ((num-gotos (vector-length includes-tp))
+	 (includes (make-vector num-gotos '())))
+    (let outer-loop ((outer-goto-num 0))
+      (if (< outer-goto-num num-gotos)
+	  (let inner-loop ((inner-gotos (vector-ref includes-tp outer-goto-num)))
+	    (if (null? inner-gotos)
+		(outer-loop (+ outer-goto-num 1))
+		(let ((inner-goto-num (car inner-gotos)))
+		  (vector-set! includes inner-goto-num (cons outer-goto-num (vector-ref includes inner-goto-num)))
+		  (inner-loop (cdr inner-gotos)))))))
+    (let loop ((i 0)) ;< -------------------------- Is this necessary --- ???
+      (if (< i num-gotos)
 	  (begin
-	    (if (and (= 0 (vector-ref INDEX i))
+	    (vector-set! includes i (reverse (vector-ref includes i)))
+	    (loop (+ i 1)))))
+    includes))
+
+;-------------------------------------------------------------------------------
+; This function finishes computing the value of the 'follow field.  This field
+; was initialized by 'compute-DR-and-reads to the value of DR (see the comment
+; to 'construct-lalr-parser).  This function uses the 'digraph function as
+; defined in the DeRemer and Pennello paper to compute Read and then Follow.
+(define (compute-follow lalr-record)
+  (let ((reads (lalr-constructor:reads lalr-record))
+	(includes (lalr-constructor:includes lalr-record))
+	(follow (lalr-constructor:follow lalr-record)))
+    (digraph (digraph follow reads) includes)))
+
+; This is the Digraph function defined in the DeRemer and Pennello paper.  It is
+; a helper function is 'compute-follow.  The variable names were taken directly
+; out of the paper.  For an overview of how it works, see the intro on LALR
+; lookahead computation.  For detailed information, see the paper.
+(define (digraph F R)
+  (let* ((size (vector-length F))
+	 (N (make-vector size 0))
+	 (S (make-vector size 0)))
+    (let loop ((i 0))
+      (if (< i size)
+	  (begin
+	    (if (and (= 0 (vector-ref N i))
 		     (pair? (vector-ref R i)))
-		(traverse i INDEX R VERTICES top))
-	    (loop (+ i 1)))))) )
+		(traverse i N R S 1 F))
+	    (loop (+ i 1)))))
+    F))
 
-;; --
-(define (build-tables prec right-assoc non-assoc rule-preced)
-  (define (add-action St Sym Act)
-    (let* ((x (vector-ref action-table St))
-	   (y (assv Sym x)))
-     
-      (if y
-	  (if (not (= Act (cdr y)))
-	      ;; -- there is a conflict 
-	      (begin
-		(if (and (<= (cdr y) 0)
-			 (<= Act 0))
-		    (begin
-		      (display "%% Reduce/Reduce conflict ")
-		      (display "(reduce ") (display (- Act))
-		      (display ", reduce ") (display (- (cdr y)))
-		      (display ") on ") (print-symbol (+ Sym nvars))
-		      (display " in state ") (display St)
-		      (newline)
-		      (set-cdr! y (max (cdr y) Act)))
-		    (begin
-		      (let* ((state (list-ref first-state St))
-			     (token-sym (vector-ref the-terminals
-						    Sym))
-			     (token-prec (lookup-precedence prec token-sym))
-			     (rule-prec (lookup-precedence prec 
-							   (vector-ref rule-preced
-								       (- (cdr y))))))
-						    
-			(cond ((and (not rule-prec)
-				    (not token-prec))
-			       (begin
-				 (display "%% Shift/Reduce conflict ")
-				 (display "(shift ") (display Act)
-				 (display ", reduce ") (display 
-							(- (cdr y)))
-				 (display ") on ") (print-symbol 
-						    (+ Sym nvars))
-				 (display " in state ") (display St)
-				 (newline)
-				      (set-cdr! y Act)))
-			      ((not rule-prec)
-			       (set-cdr! y Act))
-			      ((not token-prec)
-			       #f)
-			      ((> token-prec rule-prec)
-			       (set-cdr! y Act))
-			      ((eq? token-prec rule-prec)
-			       (cond ((member token-sym right-assoc)
-					   (set-cdr! y Act))
-				     ((member token-sym non-assoc)
-				      (set-cdr! y '*error*))))))))))
-	  (vector-set! action-table St
-		       (cons (cons Sym Act) x)))))
-  
-  (set! action-table (make-vector nstates '()))
+; This is a helper function to 'digraph.
+(define (traverse x N R S d F)
+  (let ((infinity (+ (vector-length S) 1)))
+    (vector-set! S d x)
+    (vector-set! N x d)
+    (let loop ((R-list (vector-ref R x)))
+      (if (pair? R-list)
+	  (let ((y (car R-list)))
+	    (if (= 0 (vector-ref N y))
+		(traverse y N R S (+ d 1) F))
+	    (if (> (vector-ref N x) (vector-ref N y))
+		(vector-set! N x (vector-ref N y)))
+	    (vector-set! F x (bit-union (vector-ref F x) (vector-ref F y)))
+	    (loop (cdr R-list)))))
+    (if (= (vector-ref N x) d)
+	(let loop ((top d))
+	  (let ((t (vector-ref S top)))
+	    (vector-set! N t infinity)
+	    (if (not (= x t))
+		(begin
+		  (vector-set! F x (bit-union (vector-ref F x)
+					      (vector-ref F t)))
+		  (loop (- top 1)))))))))
 
-  (do ((i 0 (+ i 1)))  ; i = state
-      ((= i nstates))
-    (let ((red (vector-ref reduction-table i)))
-      (if (and red (>= (red-nreds red) 1))
-	  (if (and (= (red-nreds red) 1) (vector-ref consistent i))
-	      (add-action i 'default (- (car (red-rules red))))
-	      (let ((k (vector-ref lookaheads (+ i 1))))
-		(let loop ((j (vector-ref lookaheads i)))
-		  (if (< j k)
-		      (let ((rule (- (vector-ref LAruleno j)))
-			    (lav  (vector-ref LA j)))
-			(let loop2 ((token 0) (x (vector-ref lav 0)) (y 1) (z 0))
-			  (if (< token nterms)
-			      (begin
-				(let ((in-la-set? (modulo x 2)))
-				  (if (= in-la-set? 1)
-				      (add-action i token rule)))
-				(if (= y (BITS-PER-WORD))
-				    (loop2 (+ token 1) 
-					   (vector-ref lav (+ z 1))
-					   1
-					   (+ z 1))
-				    (loop2 (+ token 1) (quotient x 2) (+ y 1) z)))))
-			(loop (+ j 1)))))))))
+;--------------------------------------------------------------------------------
+; This function computes the 'LA field.  This is a list of terminal symbmols,
+; represented as bitsets, for every inconsistent reduction in the grammar.
+; These are the terminal symbols on which the parsing engine should "reduce" by
+; the given rule when in the given state.
+(define (compute-LA lalr-record)
+  (let* ((reduction-map (lalr-constructor:reduction-map lalr-record))
+	 (lookback (lalr-constructor:lookback lalr-record))
+	 (num-reductions (vector-length lookback))
+	 (follow (lalr-constructor:follow lalr-record))
+	 (LA (make-vector num-reductions 0)))
+    (let reduction-loop ((red-num 0))
+      (if (< red-num num-reductions)
+	  (let lookback-loop ((lookbacks (vector-ref lookback red-num)))
+	    (if (pair? lookbacks)
+		(let ((cur-LA (vector-ref LA red-num))
+		      (lookback-follow (vector-ref follow (car lookbacks))))
+		  (vector-set! LA red-num (bit-union cur-LA lookback-follow))
+		  (lookback-loop (cdr lookbacks)))
+		(reduction-loop (+ red-num 1))))))
+    (set-lalr-constructor:LA lalr-record LA)))
 
-    (let ((shiftp (vector-ref shift-table i)))
-      (if shiftp
-	  (let loop ((k (shift-shifts shiftp)))
-	    (if (pair? k)
-		(let* ((state (car k))
-		       (symbol (vector-ref acces-symbol state)))
-		  (if (>= symbol nvars)
-		      (add-action i (- symbol nvars) state))
-		  (loop (cdr k))))))))
-
-  (add-action final-state 0 'accept))
-
-(define (compact-action-table)
-  (define (most-common-action acts)
-    (let ((accums '()))
-      (let loop ((l acts))
-	(if (pair? l)
-	    (let* ((x (cdar l))
-		   (y (assv x accums)))
-	      (if (and (number? x) (< x 0))
-		  (if y
-		      (set-cdr! y (+ 1 (cdr y)))
-		      (set! accums (cons `(,x . 1) accums))))
-	      (loop (cdr l)))))
-
-      (let loop ((l accums) (max 0) (sym #f))
-	(if (null? l)
-	    sym
-	    (let ((x (car l)))
-	      (if (> (cdr x) max)
-		  (loop (cdr l) (cdr x) (car x))
-		  (loop (cdr l) max sym)))))))
-
-  (do ((i 0 (+ i 1)))
-      ((= i nstates))
-    (let ((acts (vector-ref action-table i)))
-      (if (vector? (vector-ref reduction-table i))
-	  (let ((act (most-common-action acts)))
-	    (vector-set! action-table i
-			 (cons `(default . ,(if act act 'error))
-			       (filter (lambda (x) 
-					 (not (eq? (cdr x) act)))
-				       acts))))
-	  (vector-set! action-table i 
-		       (cons `(default . *error*) acts))))))
-
-;; --
-
-; This function is used by 'rewrite-grammar to convert a non-terminal definition
-; into a more useable form.
+;-------------------------------------------------------------------------------
+; This function computes the 'action-table value.  It computes the actions one
+; state at a time.  It uses the vector 'workspace to temporarily hold actions
+; until the state has been analyzed.  The vector is one larger than the length
+; of symbols and each element (except the last) corresponds to a symbol.  The
+; values are actions and are either numbers or #f.  Negative numbers are
+; reductions and are the negated value of the rule number to reduce by.  Other
+; numbers are shifts (or gotos) and correspond to states.  #f means that no
+; action is defined and in this case, the default action is used.  The default
+; action is encoded in the last element of 'workspace.  In most cases it will be
+; #f meaning the action is Error.  Sometimes, however, the default action is to
+; Reduce.
 ;
-; Arguments:
-; - nonterm-def = a non-terminal definition from the grammar
-; - terms       = the list of terminal symbols
-; - nonterms    = the list of non-terminal symbols
-; Returns
-;   A list of 'prod-action records.  The fields in each record are as follows:
-; - production = A list of the (non-)terminals involved in the production.
-;                Rather than symbols, their numeric index into 'terms or
-;                'non-terms is given (with 'terms considered to be appended to
-;                'non-terms).  The first element is the non-terminal that the
-;                sequence reduceds to.  The rest of the elements are the right
-;                side of the production.
-; - action     = The (unmodified) action for the given production
-; - prec       = The terminal symbol that gives the precedence for this
-;                production or #f if there is no precedence.
-(define (rewrite-nonterm-def nonterm-def terms nonterms)
-  (let* ( (No-NT (length nonterms))
+; The values of the resulting association list will look like: (sym action arg)
+; where sym is the Scheme symbol representation of a terminal or non-terminal
+; symbol, action is one of '(shift goto reduce accept), and arg will be a rule
+; number (for 'reduce), a state number (for 'shift or 'goto), or not present
+; (for 'accept).  Additionally, the rule number will be one less than the rule
+; number used internally.  This is to adjust for the fact that there is no
+; internal rule 0.
+(define (compute-action-table lalr-record)
+  (let* ((symbols (lalr-constructor:symbols lalr-record))
+	 (num-symbols (vector-length symbols))
+	 (num-nonterminals (lalr-constructor:num-nonterminals lalr-record))
+	 (rule-rhs (lalr-constructor:rule-rhs lalr-record))
+	 (rule-items (lalr-constructor:rule-items lalr-record))
+	 (states (lalr-constructor:states lalr-record))
+	 (num-states (vector-length states))
+	 (consistent (lalr-constructor:consistent lalr-record))
+	 (reduction-map (lalr-constructor:reduction-map lalr-record))
+	 (reduction-rule-num (lalr-constructor:reduction-rule-num lalr-record))
+	 (LA (lalr-constructor:LA lalr-record))
+	 (action-table (make-vector num-states))
+	 (workspace (make-vector (+ num-symbols 1))))
+    (let state-loop ((state-num 0))
+      (if (< state-num num-states)
+	  (let* ((state (vector-ref states state-num))
+		 (reductions (state:reductions state))
+		 (LR-state (make-LR-state)))
+	    ; Start by clearing the workspace
+	    (vector-fill! workspace #f)
 
-	  ; Encode takes either a terminal or non-terminal symbol and converts
-	  ; the symbol into a number.  This number is based on its position in
-	  ; either 'terms or 'nonterms.
-	  (encode (lambda (x)
-		    (let ((PosInNT (list-index (lambda (term)
-						 (equal? x term)) nonterms)))
-		      (if PosInNT
-			  PosInNT
-			  (let ((PosInT (list-index (lambda (term)
-						      (equal? x term)) terms)))
-			    (if PosInT
-				(+ No-NT PosInT)
-				(error "undefined symbol : " x))))))) )
+	    ; Add the reductions
+	    (if (and (pair? reductions) (vector-ref consistent state-num))
+		(vector-set! workspace num-symbols (- (car reductions)))
+		(let ((max (vector-ref reduction-map (+ state-num 1))))
+		  (let reduction-loop ((LA-num (vector-ref reduction-map
+							   state-num)))
+		    (if (< LA-num max)
+			(let ((rule (vector-ref reduction-rule-num LA-num))
+			      (bitset (vector-ref LA LA-num)))
+			  (let term-loop ((term-num num-nonterminals)
+					  (bitset bitset))
+			    (if (not (= bitset 0))
+				(begin
+				  (if (= (modulo bitset 2) 1)
+				      (vector-set! workspace term-num
+						   (resolve-conflict
+						    state-num
+						    term-num
+						    (vector-ref workspace
+								term-num)
+						    (- rule)
+						    lalr-record)))
+				  (term-loop (+ term-num 1)
+					     (quotient bitset 2))))))))))
 
-    (if (not (pair? (cdr nonterm-def)))
-	(error "At least one production needed for nonterminal"
-	       (car nonterm-def))
-	(let loop ((lst (cdr nonterm-def))
-		   (i 1)
-		   (rev-productions-and-actions '()))
-	  (if (not (pair? lst))
-	      (reverse rev-productions-and-actions)
-	      (let* ((prec (if (equal? (length (car lst)) 3)
-			       (cadaar lst)
-			       #f))
-		     (rhs  (if (equal? (length (car lst)) 3)
-			       (list-ref (car lst) 1)
-			       (caar lst)))
-		     (rest  (cdr lst))
-		     (prod (map encode (cons (car nonterm-def) rhs))))
-		(for-each (lambda (x)
-			    (if (not (or (member x terms) (member x nonterms)))
-				(error "Invalid terminal or nonterminal" x)))
-			  rhs)
-		(loop rest
-		      (+ i 1)
-		      (cons
-		       (make-prod-action prod
-					 (if (equal? (length (car lst)) 3)
-					     (list-ref (car lst) 2)
-					     (list-ref (car lst) 1))
-					 prec)
-		       rev-productions-and-actions))))))) )
+	    ; Add the shifts and gotos
+	    (let shift-loop ((shifts (state:shifts state)))
+	      (if (pair? shifts)
+		  (let* ((to-state-num (state:number (car shifts)))
+			 (symbol (state:access-symbol (car shifts))))
+		    (vector-set! workspace symbol
+				 (resolve-conflict state-num symbol
+						   (vector-ref workspace symbol)
+						   to-state-num lalr-record))
+		    (shift-loop (cdr shifts)))))
 
-; Checks to see if its argument is a valid non-terminal symbol
-(define (valid-nonterminal? x)
-  (symbol? x))
+	    ; Optimize the default action
+	    (cond ((null? reductions)
+		   #f) ; Do nothing
+		  ((vector-ref workspace num-symbols)
+		   ; Check to make sure that the range is not filled
+		   (let loop ((symbol-num num-nonterminals))
+		     (cond ((= symbol-num num-symbols)
+			    ; If we get here, the range was filled.
+			    (vector-set! workspace num-symbols #f))
+			   ((vector-ref workspace symbol-num)
+			    (loop (+ symbol-num 1))))))
+		  (else ; There are multiple reductions.  Make one the default
+		   (let ((red-count (make-integer-table)))
+		     (let loop ((symbol-num num-nonterminals)
+				(cur-max -1) (cur-rule #f))
+		       (if (< symbol-num num-symbols)
+			   (let ((action (vector-ref workspace symbol-num)))
+			     (if (and action (< action 0))
+				 (let* ((count (table-ref red-count action))
+					(new-count (if count (+ count 1) 0)))
+				   (table-set! red-count action new-count)
+				   (if (> new-count cur-max)
+				       (loop (+ symbol-num 1) new-count action)
+				       (loop (+ symbol-num 1)
+					     cur-max cur-rule)))
+				 (loop (+ symbol-num 1) cur-max cur-rule)))
+			   (begin
+			     (vector-set! workspace num-symbols cur-rule)
+			     (let loop ((symbol-num num-nonterminals))
+			       (if (< symbol-num num-symbols)
+				   (begin
+				     (if (eq? (vector-ref workspace symbol-num)
+					      cur-rule)
+					 (vector-set! workspace symbol-num #f))
+				     (loop (+ symbol-num 1)))))))))))
 
-; Checks to see if its argument is a valid terminal symbol
-(define (valid-terminal? x)
-  (symbol? x))
+	    ; Add the goto actions
+	    (let goto-loop ((symbol-num 0) (gotos '()))
+	      (cond ((>= symbol-num num-nonterminals)
+		     (set-LR-state:goto-table LR-state gotos))
+		    ((vector-ref workspace symbol-num) =>
+		     (lambda (state)
+		       (goto-loop (+ symbol-num 1)
+				  (cons (list (vector-ref symbols symbol-num)
+					      'goto state)
+					gotos))))
+		    (else
+		     (goto-loop (+ symbol-num 1) gotos))))
 
-;; ---------------------------------------------------------------------- ;;
-;; Miscellaneous                                                          ;;
-;; ---------------------------------------------------------------------- ;;
-
-; Takes two sets (represented as sorted lists) and computes their union.
-(define (sunion lst1 lst2)
-  (let loop ((L1 lst1)
-	     (L2 lst2))
-    (cond ((null? L1)    L2)
-	  ((null? L2)    L1)
-	  (else
-	   (let ((x (car L1)) (y (car L2)))
-	     (cond
-	      ((> x y)
-	       (cons y (loop L1 (cdr L2))))
-	      ((< x y)
-	       (cons x (loop (cdr L1) L2)))
-	      (else
-	       (loop (cdr L1) L2))
-	      ))))))
-
-; Takes a set (represented as a sorted list) and adds 'elem to the set.
-(define (sinsert elem lst)
-  (let loop ((l1 lst))
-    (if (null? l1)
-	(cons elem l1)
-	(let ((x (car l1)))
-	  (cond ((< elem x)
-		 (cons elem l1))
-		((> elem x)
-		 (cons x (loop (cdr l1))))
-		(else 
-		 l1))))))
-
-;; ---------------------------------------------------------------------- ;;
-;; Debugging tools ...                                                    ;;
-;; ---------------------------------------------------------------------- ;;
-(define the-terminals #f)
-(define the-nonterminals #f)
-
-(define (print-item item-no)
-  (let loop ((i item-no))
-    (let ((v (vector-ref ritem i)))
-      (if (>= v 0)
-	  (loop (+ i 1))
-	  (let* ((rlno    (- v))
-		 (nt      (vector-ref rlhs rlno)))
-	    (display (vector-ref the-nonterminals nt)) (display " --> ")
-	    (let loop ((i (vector-ref rrhs rlno)))
-	      (let ((v (vector-ref ritem i)))
-		(if (= i item-no)
-		    (display ". "))
-		(if (>= v 0)
-		    (begin
-		      (print-symbol v)
-		      (display " ")
-		      (loop (+ i 1)))
-		    (begin 
-		      (display "   (rule ")
-		      (display (- v))
-		      (display ")")
-		      (newline))))))))))
-  
-(define (print-symbol n)
-  (display (if (>= n nvars)
-	       (vector-ref the-terminals (- n nvars))
-	       (vector-ref the-nonterminals n))))
-  
-(define (print-action act)
-  (cond
-   ((eq? act '*error*)
-    (display " : Error"))
-   ((eq? act 'accept)
-    (display " : Accept input"))
-   ((< act 0)
-    (display " : reduce using rule ")
-    (display (- act)))
-   (else
-    (display " : shift and goto state ")
-    (display act)))
-  (newline)
-  #t)
-
-(define (print-actions acts)
-    (let loop ((l acts))
-      (if (null? l)
-	  #t
-	  (let ((sym (caar l))
-		(act (cdar l)))
-	    (display "   ")
-	    (cond
-	     ((eq? sym 'default)
-	      (display "default action"))
-	     (else
-	      (print-symbol (+ sym nvars))))
-	    (print-action act)
-	    (loop (cdr l))))))
-
-(define (print-states)
-  
-  (if (not action-table)
-      (begin
-	(display "No generated parser available!")
-	(newline)
-	#f)
-      (begin
-	(display "State table") (newline)
-	(display "-----------") (newline) (newline)
-  
-	(let loop ((l first-state))
-	  (if (null? l)
-	      #t
-	      (let* ((core  (car l))
-		     (i     (core-number core))
-		     (items (core-items core))
-		     (actions (vector-ref action-table i)))
-		(display "state ") (display i) (newline)
-		(newline)
-		(for-each (lambda (x) (display "   ") (print-item x))
-			  items)
-		(newline)
-		(print-actions actions)
-		(newline)
-		(loop (cdr l))))))))
-
-(define (lookup-precedence prec x)
-  (let loop ((i 0))
-    (if (>= i (length prec))
-	#f
-	(if (member x (list-ref prec i))
-	    i
-	    (loop (+ 1 i))))))
-
-; This function calculates figures out the precedence for each rule that did not
-; have a precedence symbol specified manually.  It does this by going through
-; the items on the right hand side of the rule and finding the last terminal
-; symbol.  The precedence of that symbol, if it has one, then becomes the
-; precedence for the rule.
-;
-; Arguments:
-; - rule-preced = A vector containing the manually specified precedence symbol for
-;                 the corresponding rule in 'rrhs & 'rlhs or #f if it was not
-;                 specified.
-; Rules:
-;   nothing (it modifies the value of 'rule-preced)
-(define (calculate-precedence rule-preced)
-  (let loop ((x 1))
-    (if (< x nrules)
-	(if (vector-ref rule-preced x)
-	    (loop (+ x 1))
-	    (begin
-	      (vector-set! rule-preced
-			   x
-			   (let iloop ((i (vector-ref rrhs x))
-				       (psf #f))
-			     (let ((t (vector-ref ritem i)))
-			       (cond ((< t -1)
-				      psf)
-				     ((< t nvars)    ; a non-terminal
-				      (iloop (+ 1 i) psf))
+	    ; Add the shift/reduce actions
+	    (let action-loop ((symbol-num num-nonterminals)
+			      (actions (if (vector-ref workspace num-symbols)
+					   (list #f 'reduce
+						 (- (+ (vector-ref workspace
+								   num-symbols)
+						       1)))
+					   '())))
+	      (cond ((>= symbol-num num-symbols)
+		     (set-LR-state:shift-reduce-table LR-state actions))
+		    ((vector-ref workspace symbol-num) =>
+		     (lambda (action)
+		       (let* ((sym (vector-ref symbols symbol-num))
+			      (action
+			       (cond ((< action 0)
+				      (list sym 'reduce (- (+ action 1))))
+				     ((= symbol-num num-nonterminals)
+				      (list sym 'accept))
 				     (else
-				      (iloop (+ 1 i)
-					     (vector-ref
-					      the-terminals
-					      (- t nvars))))))))
-	      (loop (+ x 1)))))))
+				      (list sym 'shift action)))))
+			 (action-loop (+ symbol-num 1)
+				      (cons action actions)))))
+		    (else
+		     (action-loop (+ symbol-num 1) actions))))
+
+	    ; Add the list of items
+	    (let item-loop ((our-items (compute-closure state lalr-record))
+			    (output-items '()))
+	      (if (pair? our-items)
+		  (let ((item (car our-items)))
+		    (let search-loop ((cur-item item))
+		      (if (>= (vector-ref rule-items cur-item) 0)
+			  (search-loop (+ cur-item 1))
+			  (let* ((rule (- (vector-ref rule-items cur-item)))
+				 (first-item (vector-ref rule-rhs rule)))
+			    (item-loop (cdr our-items)
+				       (cons (list (- rule 1)
+						   (- item first-item))
+					     output-items))))))
+		  (set-LR-state:items LR-state output-items)))
+
+	    ; Finish up this state and to to the next
+	    (vector-set! action-table state-num LR-state)
+	    (state-loop (+ state-num 1)))))
+
+    (set-lalr-constructor:action-table lalr-record action-table)))
+
+; This is a helper function used by 'compute-action-table.  It is used to
+; resolve conflicts that are encountered when building the action table.  It
+; takes two actions are returns the one that should be used.  In the special
+; case of two actions with equal precedence and an associativity of 'non, it
+; returns #f to indicate the action of Error.
+;
+; Arguments:
+; - state = The state number.  It is used in warning messages.
+; - terminal = The terminal symbol on which the conflict is occuring.
+; - cur-action = The current action in the action table for 'terminal.  In most
+;      cases, this will be #f.  In this case, there is no conflict and we just
+;      return the new action.  In all other cases, it will be a negative number
+;      indicating a reduction.  Due to properties of the LR(0) parser, there
+;      will never be a Shift/Shift conflict.
+; - new-action = This is the new candidate action
+; - lalr-record = The lalr-record which contains the precedence maps
+(define (resolve-conflict state-num terminal cur-action new-action lalr-record)
+  (cond ((eq? cur-action #f)
+	 new-action)
+	((and (< cur-action 0) (< new-action 0))
+	 (display "Reduce/Reduce conflict in state: ")
+	 (display state-num)
+	 (newline)
+	 (max cur-action new-action))
+	(else
+	 (let* ((symbols (lalr-constructor:symbols lalr-record))
+		(term-base (lalr-constructor:num-nonterminals lalr-record))
+		(precedence-map (lalr-constructor:precedence-map lalr-record))
+		(assoc-map (lalr-constructor:associativity-map lalr-record))
+		(rule-precedence (lalr-constructor:rule-precedence lalr-record))
+		(term-prec (vector-ref precedence-map (- terminal term-base)))
+		(rule-prec (vector-ref rule-precedence (- cur-action)))
+		(associativity (vector-ref assoc-map term-prec)))
+	   (cond ((> term-prec rule-prec)
+		  new-action)
+		 ((< term-prec rule-prec)
+		  cur-action)
+		 ; At this point, we know the two are equal
+		 ((= term-prec 0)
+		  (display "Shift/Reduce conflict in state: ")
+		  (display state-num) (newline)
+		  (display "   Shift: ")
+		  (display (vector-ref symbols terminal)) (newline)
+		  (display "   Reduce: ")
+		  (display (- (+ cur-action 1))) (newline)
+		  new-action)
+		 ((eq? associativity 'left)
+		  cur-action)
+		 ((eq? associativity 'right)
+		  new-action)
+		 (else ; non-associative
+		  #f))))))
+
+;-------------------------------------------------------------------------------
+; This is the function that is called after all the major computation has been
+; done.  It converts everything into a 'LR-program record and then returns it.
+(define (construct-LR-program lalr-record)
+  (let* ((symbols (lalr-constructor:symbols lalr-record))
+	 (num-symbols (vector-length symbols))
+	 (num-nonterminals (lalr-constructor:num-nonterminals lalr-record))
+	 (rule-lhs (lalr-constructor:rule-lhs lalr-record))
+	 (rule-rhs (lalr-constructor:rule-rhs lalr-record))
+	 (rule-items (lalr-constructor:rule-items lalr-record))
+	 (rule-actions (lalr-constructor:rule-actions lalr-record))
+
+	 (terminals (let loop ((i (- num-symbols 1)) (list '()))
+		      (if (> i num-nonterminals)
+			  (loop (- i 1) (cons (vector-ref symbols i) list))
+			  list)))
+	 (eoi (vector-ref symbols num-nonterminals))
+	 (error (lalr-constructor:error-symbol lalr-record))
+	 (rules (make-vector (- (vector-length rule-rhs) 1)))
+	 (states (lalr-constructor:action-table lalr-record)))
+
+    (let rule-loop ((top-item (- (vector-length rule-items) 2)))
+      (if (> top-item 0)
+	  (let* ((rule-num (- (vector-ref rule-items top-item)))
+		 (bottom-item (vector-ref rule-rhs rule-num))
+		 (rule-length (- top-item bottom-item))
+		 (right-side (make-vector rule-length)))
+	    (let item-loop ((i 0))
+	      (if (< i rule-length)
+		  (begin
+		    (vector-set! right-side i
+				 (vector-ref symbols
+					     (vector-ref rule-items
+							 (+ i bottom-item))))
+		    (item-loop (+ i 1)))))
+	    (vector-set! rules (- rule-num 1)
+			 (make-LR-rule (vector-ref symbols
+						   (vector-ref rule-lhs
+							       rule-num))
+				       right-side
+				       (vector-ref rule-actions rule-num)))
+	    (rule-loop (- bottom-item 1)))))
+    (make-LR-program terminals eoi error rules states)))

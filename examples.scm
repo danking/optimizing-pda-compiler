@@ -1,6 +1,6 @@
 ;;; Shivers' grammar for Appel's Tiger language.
 
-(define tiger-grammar '(
+(define tiger-grammar (cfg
  ;; Terminals/tokens & precedence declarations
  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
  ;; Note the RIGHT declaration below. IF, WHILE, FOR & := expressions 
@@ -23,15 +23,15 @@
   FOR TO LET IN END BREAK NIL
   FUNCTION VAR TYPE
 
-  (right THEN ELSE DO ASSIGN)
-  (left OF)
-  (left OR)
-  (left AND)
-  (non EQ NEQ)
-  (left LT LE GT GE)
-  (left MINUS PLUS)
+  (left UMINUS)
   (left TIMES DIVIDE)
-  (left UMINUS))
+  (left MINUS PLUS)
+  (left LT LE GT GE)
+  (non EQ NEQ)
+  (left AND)
+  (left OR)
+  (left OF)
+  (right THEN ELSE DO ASSIGN))
 
  ;; Productions
  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
