@@ -1,140 +1,54 @@
-;;; Shivers' grammar for Appel's Tiger language.
+(define (get-token stream lookahead)
+  (if (null? stream)
+      '*EOF*
+      (car stream)))
 
-(define tiger-grammar
-  '((tokens ID INT STRING COMMA COLON SEMICOLON
-	    LPAREN RPAREN LBRACK RBRACK LBRACE
-	    RBRACE DOT 
-	    ARRAY IF WHILE
-	    FOR TO LET IN END BREAK NIL
-	    FUNCTION VAR TYPE
+(define-syntax token-case
+  (syntax-rules ()
+    ((token-case token rest ...)
+     (case (let ((t token))
+	     (if (number? t)
+		 'NUM
+		 (case t
+		   ((#\() 'L-PAREN)
+		   ((#\)) 'R-PAREN)
+		   ((#\;) 'SEMICOLON)
+		   ((+) 'PLUS)
+		   ((-) 'MINUS)
+		   ((*) 'TIMES)
+		   ((/) 'DIVIDE)
+		   ((*EOF*) t)
+		   (else 'LEXER-ERROR))))
+       rest ...))))
 
-	    (left UMINUS)
-	    (left TIMES DIVIDE)
-	    (left MINUS PLUS)
-	    (left LT LE GT GE)
-	    (non EQ NEQ)
-	    (left AND)
-	    (left OR)
-	    (left OF)
-	    (right THEN ELSE DO ASSIGN)
+(define (parse-error state token)
+  (display "Parse error in state: ") (display state)
+  (display " on token: ") (display token) (newline)
+  #t)
 
-	    (error *Error)
-	    (eos *EOI))
+(define calculator
+  (parse/cfg get-token cdr token-case parse-error
+    ((tokens NUM L-PAREN R-PAREN SEMICOLON
+	     (left TIMES DIVIDE)
+	     (left PLUS MINUS)
+	     (error *ERROR*)
+	     (eos *EOF*))
 
-    ;; Productions
-    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-    ;; Un burro es un animal. La plume de ma tante.
-    ;; Wo yao mai zhongguo ditu. Uni programma es uno espresso.
-    (non-term program
-	      (=> (exp) #f))
-    
-    ;; Possibly empty sequence of declarations.
-    (non-term decls
-	      (=> (decls decl) #f)
-	      (=> ()           #f))
-    
-    (non-term decl
-	      (=> (tydec)  #f)
-	      (=> (vardec) #f)
-	      (=> (fundec) #f))
-    
-    (non-term tydec
-	      (=> (TYPE ID EQ ty) #f))
-    (non-term ty
-	      (=> (ID)                     #f)
-	      (=> (LBRACE tyfields RBRACE) #f)
-	      (=> (ARRAY OF ID)            #f))
-    
-    ;; Comma-separated list of type fields, possibly empty.
-    (non-term tyfields
-	      (=> (tyfieldscomma tyfield) #f)
-	      (=> ()                      #f))
-    (non-term tyfieldscomma
-	      (=> (tyfieldscomma tyfield COMMA) #f)
-	      (=> ()                            #f))
-    
-    (non-term tyfield
-	      (=> (ID COLON ID) #f))
-    
-    (non-term vardec
-	      (=> (VAR ID COLON ID ASSIGN exp) #f)
-	      (=> (VAR ID ASSIGN exp)          #f))
-    
-    (non-term fundec
-	      (=> (FUNCTION ID LPAREN tyfields RPAREN EQ exp)          #f)
-	      (=> (FUNCTION ID LPAREN tyfields RPAREN COLON ID EQ exp) #f))
-    
-    ;; This <idbrack> and the <lvalue>/<lvaluea> hackery is to eliminate 
-    ;; conflict when disambiguating between
-    ;;     <lvalue> : <id> [ <exp> ]
-    ;;     <exp>    : <id> [ <exp> ] of <exp>
-    (non-term idbrack
-	      (=> (ID LBRACK exp RBRACK) #f))
-    
-    (non-term exp
-	      (=> (IF exp THEN exp ELSE exp)		#f)
-	      (=> (IF exp THEN exp)			#f)
-	      (=> (WHILE exp DO exp)			#f)
-	      (=> (FOR ID ASSIGN exp TO exp DO exp)	#f)
-	      (=> (lvalue ASSIGN exp)			#f)
-	      (=> (idbrack OF exp)			#f)
-	      (=> (LET decls IN expseq END)		#f)
-	      (=> (ID LPAREN args RPAREN)		#f)
-	      (=> (lvalue)				#f)
-	      (=> (INT)					#f)
-	      (=> (STRING)				#f)
-	      (=> (binop)				#f)
-	      (=> (LPAREN expseq RPAREN)		#f)
-	      (=> UMINUS (MINUS exp)			#f)
-	      (=> (ID LBRACE fieldassigns RBRACE)	#f)
-	      (=> (BREAK)				#f)
-	      (=> (NIL)					#f))
-    
-    ;; Comma-separated list of expressions, possibly empty.
-    (non-term args
-	      (=> (argscomma exp)  #f)
-	      (=> ()               #f))
-    (non-term argscomma
-	      (=> (argscomma exp COMMA) #f)
-	      (=> ()                    #f))
-    
-    ;; Semicolon-separated list of expressions, possibly empty.
-    (non-term expseq
-	      (=> (expseqsemi exp)  #f)
-	      (=> ()                #f))
-    (non-term expseqsemi
-	      (=> (expseqsemi exp SEMICOLON)  #f)
-	      (=> ()                          #f))
-    
-    (non-term binop
-	      (=> (exp PLUS exp)    #f)
-	      (=> (exp MINUS exp)   #f)
-	      (=> (exp TIMES exp)   #f)
-	      (=> (exp DIVIDE exp)  #f)
-	      (=> (exp LT exp)  	  #f)
-	      (=> (exp LE exp)  	  #f)
-	      (=> (exp EQ exp)  	  #f)
-	      (=> (exp GE exp)  	  #f)
-	      (=> (exp GT exp)      #f)
-	      (=> (exp NEQ exp)     #f)
-	      (=> (exp AND exp)     #f)
-	      (=> (exp OR exp)      #f))
-    
-    ;; Comma-separated list of field assignments, possibly empty.
-    (non-term fieldassigns
-	      (=> (fieldassignscomma fieldassign) #f)
-	      (=> ()                              #f))
-    (non-term fieldassignscomma
-	      (=> (fieldassignscomma fieldassign COMMA) #f)
-	      (=> ()                                    #f))
-    (non-term fieldassign
-	      (=> (ID EQ exp) #f))
-    
-    (non-term lvalue
-	      (=> (ID)      #f)
-	      (=> (lvaluea) #f))
-    (non-term lvaluea
-	      (=> (ID DOT ID)                  #f)
-	      (=> (idbrack)                    #f)
-	      (=> (lvaluea DOT ID)             #f)
-	      (=> (lvaluea LBRACK exp RBRACK)  #f))))
+     (non-term program
+	       (=> (s-list)				s-list)
+	       (=> (s-list exp)				(begin (display exp) (newline) (cons exp s-list)))
+	       (=> (s-list *ERROR*)			(cons (if #f #f) s-list)))
+     (non-term s-list
+	       (=> ()					'())
+	       (=> (s-list statement)			(cons statement s-list)))
+     (non-term statement
+	       (=> (exp SEMICOLON)			(begin (display exp) (newline) exp))
+	       (=> (*ERROR* SEMICOLON)			(if #f #f)))
+     (non-term exp
+	       (=> (NUM)				NUM)
+	       (=> (exp PLUS exp)			(+ exp-1 exp-2))
+	       (=> (exp MINUS exp)			(- exp-1 exp-2))
+	       (=> ((expA exp) TIMES (expB exp))	(* expA expB))
+	       (=> ((expA exp) DIVIDE exp)		(quotient expA exp))
+	       (=> (L-PAREN exp R-PAREN)		exp))
+)))

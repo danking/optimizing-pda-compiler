@@ -41,6 +41,9 @@
   ;; the information is passed on through.
   (no-shift #f)
 
+  ;; This is the list of symbols that can guard the accept action.  
+  (end-of-parse #f)
+
   ;; These three fields function together as a dense representation of the
   ;; grammar.  All three are vectors.  Each element RULE-LHS and RULE-RHS
   ;; (except index 0) corresponds to a rule.  RULE-LHS contains the non-terminal
@@ -365,6 +368,8 @@
 ;;;      (prec term ...) where PREC is one of '(left right non)
 ;;; - ERR = The name of the error symbol used by the grammar or #f.
 ;;; - EOS = The name of the token that will mark the end-of-stream or #f.
+;;; - EOP = A list of tokens that are valid for guarding the accept action.
+;;;      This should probably include EOS but that is not required.
 ;;; - NO-SHIFT = A list of tokens that should never be shifted.  This should
 ;;;      probably include EOS but that is not required.
 ;;; - START = The name of the start non-terminal
@@ -402,6 +407,7 @@
 ;;; - USER-START-SYMBOL
 ;;; - ERROR-SYMBOL
 ;;; - NO-SHIFT
+;;; - END-OF-PARSE
 ;;; - RULE-LHS
 ;;; - RULE-RHS
 ;;; - RULE-ITEMS
@@ -460,7 +466,9 @@
        (set-lalr-constructor:user-start-symbol lalr-record
 					       (table-ref reverse-map start))
        (set-lalr-constructor:error-symbol lalr-record err)
-       (set-lalr-constructor:no-shift lalr-record no-shift))
+       (set-lalr-constructor:no-shift lalr-record no-shift)
+       (set-lalr-constructor:end-of-parse lalr-record
+	  (map (lambda (token) (table-ref reverse-map token)) eop)))
 
     lalr-record))
 
@@ -1319,26 +1327,22 @@
     (set-lalr-constructor:LA lalr-record LA)))
 
 ;;;-----------------------------------------------------------------------------
-;;; This function computes the ACTION-TABLE field.  It computes the actions one
+;;; This function computes the STATE-TABLE field.  It computes the actions one
 ;;; state at a time.  It uses the vector WORKSPACE to temporarily hold actions
 ;;; until the state has been analyzed.  The vector is one larger than the length
 ;;; of symbols and each element (except the last) corresponds to a symbol.  The
-;;; values are actions and are either numbers or #f.  Negative numbers are
+;;; values are lists of numbers which represent actions.  Negative numbers are
 ;;; reductions and are the negated value of the rule number to reduce by.  Other
-;;; numbers are shifts (or gotos) and correspond to states.  #f means that no
-;;; action is defined and in this case, the default action is used.  The default
-;;; action is encoded in the last element of WORKSPACE.  In most cases it will
-;;; be #f meaning the action is Error.  Sometimes, however, the default action
-;;; is to Reduce.
-;;;
-;;; For a detailed description of the output, see the comments for
-;;; LR-STATE:SHIFT-REDUCE-TABLE in records.scm.  Also note that all the rule
-;;; numbers are reduced by one in the final output.  This is because there is no
-;;; internal rule 0 but there will be in the output record.
+;;; numbers are shifts (or gotos) and correspond to states.  If there is more
+;;; than one number, that symbol has a conflict and the action on top is the one
+;;; that will appear in the generated PDA.  The default action is encoded in the
+;;; last element of WORKSPACE.  Usually this will be empty but sometimes it will
+;;; contain a reduce.
 (define (compute-state-table lalr-record)
   (let* ((symbols (lalr-constructor:symbols lalr-record))
 	 (num-symbols (vector-length symbols))
 	 (num-nonterminals (lalr-constructor:num-nonterminals lalr-record))
+	 (end-of-parse (lalr-constructor:end-of-parse lalr-record))
 	 (rule-lhs (lalr-constructor:rule-lhs lalr-record))
 	 (rule-rhs (lalr-constructor:rule-rhs lalr-record))
 	 (rule-items (lalr-constructor:rule-items lalr-record))
@@ -1469,7 +1473,8 @@
 			     (cond ((< action 0)
 				    (list 'REDUCE lookahead
 					  (rule->symbol action)))
-				   ((= state-num accept-state)
+				   ((and (= state-num accept-state)
+					 (member symbol-num end-of-parse))
 				    (list 'ACCEPT lookahead))
 				   (else
 				    (list 'SHIFT lookahead
@@ -1516,20 +1521,22 @@
 
     (set-lalr-constructor:state-table lalr-record state-table)))
 
-;;; This is a helper function used by COMPUTE-ACTION-TABLE.  It is used to
+;;; This is a helper function used by COMPUTE-STATE-TABLE.  It is used to
 ;;; resolve conflicts that are encountered when building the action table.  It
 ;;; takes two actions are returns the one that should be used.  In the special
 ;;; case of two actions with equal precedence and an associativity of 'non, it
-;;; returns #f to indicate the action of Error.
+;;; returns '() to indicate the action of Error.
 ;;;
 ;;; Arguments:
 ;;; - STATE = The state number.  It is used in warning messages.
 ;;; - TERMINAL = The terminal symbol on which the conflict is occuring.
-;;; - CUR-ACTION = The current action in the action table for TERMINAL.  In most
-;;;      cases, this will be #f.  In this case, there is no conflict and we just
-;;;      return the new action.  In all other cases, it will be a negative
-;;;      number indicating a reduction.  Due to properties of the LR(0) parser,
-;;;      there will never be a Shift/Shift conflict.
+;;; - CUR-ACTION = The current action in the action table for TERMINAL.  It will
+;;;      be a list containting the possible actions that could happen on
+;;;      TERMINAL.  In most cases, this will be '() and there is no conflict.
+;;;      In other cases, the CAR of the list will contain the conflicting
+;;;      action.  This will always be a negative number indicating a reduction.
+;;;      Due to properties of the LR(0) parser, there will never be a
+;;;      Shift/Shift conflict.
 ;;; - NEW-ACTION = This is the new candidate action
 ;;; - LALR-RECORD = The LALR-CONSTRUCTOR which contains the precedence maps
 (define (resolve-conflict state-num terminal cur-actions new-action lalr-record)
@@ -1584,7 +1591,8 @@
 
 ;;;-----------------------------------------------------------------------------
 ;;; This is the function that is called after all the major computation has been
-;;; done.  It converts everything into a LR-PROGRAM record and then returns it.
+;;; done.  It generates the "rest" of the PDA (after COMPUTE-STATE-TABLE did the
+;;; hard part.
 (define (construct-PDA lalr-record)
   (let* ((symbols (lalr-constructor:symbols lalr-record))
 	 (num-symbols (vector-length symbols))
