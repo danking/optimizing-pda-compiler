@@ -1551,10 +1551,10 @@
 	    ; Add the shift/reduce actions
 	    (let action-loop ((symbol-num num-nonterminals)
 			      (actions (if (vector-ref workspace num-symbols)
-					   (list #f 'reduce
-						 (- (+ (vector-ref workspace
-								   num-symbols)
-						       1)))
+					   (list (list #t 'reduce
+						       (- (+ (vector-ref
+							      workspace
+							      num-symbols) 1))))
 					   '())))
 	      (cond ((>= symbol-num num-symbols)
 		     (set-LR-state:shift-reduce-table LR-state actions))
@@ -1584,7 +1584,7 @@
 			  (let* ((rule (- (vector-ref rule-items cur-item)))
 				 (first-item (vector-ref rule-rhs rule)))
 			    (item-loop (cdr our-items)
-				       (cons (list (- rule 1)
+				       (cons (cons (- rule 1)
 						   (- item first-item))
 					     output-items))))))
 		  (set-LR-state:items LR-state output-items)))
