@@ -1,0 +1,60 @@
+Main Macros
+- (create-pda cfg [EOI-sym] [error-sym])
+  A macro that takes a CFG sexp as input and returns a PDA sexp
+- (run-pda pda lexer-exp case-macro action-func)
+  A macro that takes a PDA sexp, a lexer expression, a macro to do switches, and
+  a function to evaluate semantic actions.  It evaluates into a function that
+  takes no arguments and when called, repeatedly invokes lexer-exp and action-func
+  until the End-of-Input has been reached.
+- (compile-actions pda)
+  A macro that takes a pda sexp and returns another pda sexp where the semantic
+  actions have been wrapped in lambdas.  (And thus the built-in function APPLY can
+  be used as the semantic action evaluator for RUN-PDA).
+
+Auxiliary Functions
+- A function that takes a PDA sexp and prints out the states to <someplace>
+? A function that takes a PDA sexp and determines if it is valid
+? A function that takes a PDA sexp and removes unused rules and states
+
+Paper Outline
+- Problems with existing solutions
+  - commit the author to using a specific language for semantic actions
+  ? name binding in semantic actions is arbitrary
+  - generators have side-effects and are not pure
+  - cannot write a PDA manually
+  - the interface with the lexer is fixed
+- Solution
+  - Use Scheme's Macros to breakdown the problem into individual languages
+- CFG Language (typical--not much to say here)
+  - description
+    - allows EOI symbol and error symbol to be specified manually (or not used)
+  - (create-pda ...) macro
+- PDA Language
+  - description of language
+  - Advantages:
+    - same format for LR(0), SLR, and regular LR
+    - generalizes to [LA]LR(k>1) easily
+    - human writable and (usually) readable
+    ? nonterminal namespace is distinct from terminal symbol namespace
+      - although this does not apply to generated PDAs
+    ? possible to represent conflicts without changing the meaning
+    - possible to verify the program's correctness
+    - semantic action language is still distinct
+  - Tools
+    - A correctness function
+    - A size reduction function
+? Lexer Language
+  ? Can be separate from the token classes
+  ? A macro can be supplied to translate between the two
+    - If this is not needed, the built-in CASE can be used for a simple one
+- Semantic Actions
+  - Scheme expressions in the common cases
+    - Tools are provided for this
+  ? Arbitrary name bindings are allowed
+  - Can be anything
+? Further Work
+  ? Multiple start states
+  ? A lexer language and macro to accompany the parser
+  ? Fisher-Burke Error Repair
+  ? Allows terminals and non-terminals to be something besides Scheme symbols
+    - numbers?, eof for the EOI symbol?, etc...

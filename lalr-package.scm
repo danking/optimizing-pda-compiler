@@ -1,5 +1,5 @@
 (define-structure lalr
-  (export ; records.scm
+  (export ;; records.scm
 	  make-cfg cfg?
 	  cfg:terminals cfg:eoi cfg:error cfg:start cfg:rules
 	  set-cfg:terminals set-cfg:eoi set-cfg:error set-cfg:start
@@ -29,20 +29,20 @@
 	  LR-state:shift-reduce-table LR-state:goto-table LR-state:items
 	  set-LR-state:shift-reduce-table set-LR-state:goto-table
 	  set-LR-state:items
-	  ; lalr.scm
+	  ;; lalr.scm
 	  create-lalr-parser
-	  ; cfg.scm
-	  cfg
-	  ; utilities.scm
+	  ;; cfg.scm
+	  (cfg :syntax)
+	  ;; utilities.scm
 	  print-LR-program
-	  ; engine.scm
+	  ;; engine.scm
 	  pda-engine simple-parse-error-func
-	  ; semantic-actions.scm
+	  ;; semantic-actions.scm
 	  null-action-evaluator scheme-action-evaluator
 	  compile-actions
-	  ; examples.scm
+	  ;; examples.scm
 	  tiger-grammar
-	  ; debug.scm
+	  ;; debug.scm
 	  border-string old->new)
 
   (open list-lib string-lib tables scheme-with-scsh defrec-package)
