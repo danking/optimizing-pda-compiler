@@ -1,0 +1,402 @@
+236,237c236,237
+<  in ( sp := sp + 1; 
+< tigerStack[ sp ] := 2 ;<| goto (tsp) |  #1  |>)  
+---
+>  in ( 
+> tigerStack[ sp + 1 ] := 2 ;<| goto (tsp) |  #1  |>)  
+454,456c454,456
+< ( sp := sp + 1; 
+< tigerStack[ sp ] := 15 ;<| goto (tsp) |  #1  |>)   else ( sp := sp + 1; 
+< tigerStack[ sp ] := 16 ;<| goto (tsp) |  #1  |>)  
+---
+> (
+> tigerStack[ sp + 1 ] := 15 ;<| goto (tsp) |  #1  |>)   else ( 
+> tigerStack[ sp + 1 ] := 16 ;<| goto (tsp) |  #1  |>)  
+471,472c471,472
+<  in ( sp := sp - 0 ; 
+< tigerStack[ sp ] := 12; <| tsp | #1 |> ) 
+---
+>  in ( 
+> tigerStack[ sp - 0 ] := 12; <| tsp | #1 |> ) 
+488,489c488,489
+<  in ( sp := sp - 0 ; 
+< tigerStack[ sp ] := 12; <| tsp | #1 |> ) 
+---
+>  in ( 
+> tigerStack[ sp - 0 ] := 12; <| tsp | #1 |> ) 
+529,530c529,530
+< ) else ( sp := sp - 0 ; 
+< tigerStack[ sp ] := 21; <| tsp | #1 |> ) 
+---
+> ) else (  
+> tigerStack[ sp - 0 ] := 21; <| tsp | #1 |> ) 
+558,559c558,559
+< ) else ( sp := sp - 0 ; 
+< tigerStack[ sp ] := 21; <| tsp | #1 |> ) 
+---
+> ) else (
+> tigerStack[ sp - 0 ] := 21; <| tsp | #1 |> ) 
+581,582c581,582
+< ) else ( sp := sp - 0 ; 
+< tigerStack[ sp ] := 12; <| tsp | #1 |> ) 
+---
+> ) else ( 
+> tigerStack[ sp - 0 ] := 12; <| tsp | #1 |> ) 
+598,599c598,599
+<  in ( sp := sp - 0 ; 
+< tigerStack[ sp ] := 12; <| tsp | #1 |> ) 
+---
+>  in (
+> tigerStack[ sp - 0 ] := 12; <| tsp | #1 |> ) 
+687,688c687,688
+< ) else ( sp := sp - 0 ; 
+< tigerStack[ sp ] := 1; <| tsp | #1 |> ) 
+---
+> ) else ( 
+> tigerStack[ sp - 0 ] := 1; <| tsp | #1 |> ) 
+710,711c710,711
+< ) else ( sp := sp - 0 ; 
+< tigerStack[ sp ] := 22; <| tsp | #1 |> ) 
+---
+> ) else ( 
+> tigerStack[ sp - 0 ] := 22; <| tsp | #1 |> ) 
+760,761c760,761
+<  in ( sp := sp - 1 ; 
+< tigerStack[ sp ] := 12; <| tsp | #1 |> ) 
+---
+>  in (
+> tigerStack[ sp - 1 ] := 12; <| tsp | #1 |> ) 
+1171,1173c1171,1173
+< ( sp := sp + 1; 
+< tigerStack[ sp ] := 19 ;<| goto (tsp) |  #1  |>)   else ( sp := sp + 1; 
+< tigerStack[ sp ] := 18 ;<| goto (tsp) |  #1  |>)  
+---
+> (
+> tigerStack[ sp + 1 ] := 19 ;<| goto (tsp) |  #1  |>)   else (
+> tigerStack[ sp + 1 ] := 18 ;<| goto (tsp) |  #1  |>)  
+1282,1284c1282,1284
+< ( sp := sp + 1; 
+< tigerStack[ sp ] := 13 ;<| goto (tsp) |  #1  |>)   else ( sp := sp + 1; 
+< tigerStack[ sp ] := 14 ;<| goto (tsp) |  #1  |>)  
+---
+> (
+> tigerStack[ sp + 1 ] := 13 ;<| goto (tsp) |  #1  |>)   else (
+> tigerStack[ sp + 1 ] := 14 ;<| goto (tsp) |  #1  |>)  
+2613,2614c2613,2614
+<  else ( sp := sp - 0 ; 
+< tigerStack[ sp ] := 0; <| tsp | #2 |> ) 
+---
+>  else ( 
+> tigerStack[ sp - 0 ] := 0; <| tsp | #2 |> ) 
+2703,2705c2703,2705
+< ( sp := sp + 1; 
+< tigerStack[ sp ] := 15 ;<| goto (tsp) |  #1  |>)   else ( sp := sp + 1; 
+< tigerStack[ sp ] := 16 ;<| goto (tsp) |  #1  |>)  
+---
+> (
+> tigerStack[ sp + 1 ] := 15 ;<| goto (tsp) |  #1  |>)   else ( 
+> tigerStack[ sp + 1 ] := 16 ;<| goto (tsp) |  #1  |>)  
+2720,2721c2720,2721
+<  in ( sp := sp - 0 ; 
+< tigerStack[ sp ] := 3; <| tsp | #1 |> ) 
+---
+>  in ( 
+> tigerStack[ sp - 0 ] := 3; <| tsp | #1 |> ) 
+2737,2738c2737,2738
+<  in ( sp := sp - 0 ; 
+< tigerStack[ sp ] := 3; <| tsp | #1 |> ) 
+---
+>  in ( 
+> tigerStack[ sp - 0 ] := 3; <| tsp | #1 |> ) 
+2754,2755c2754,2755
+<  in ( sp := sp - 0 ; 
+< tigerStack[ sp ] := 3; <| tsp | #1 |> ) 
+---
+>  in (
+> tigerStack[ sp - 0 ] := 3; <| tsp | #1 |> ) 
+2771,2772c2771,2772
+<  in ( sp := sp - 1 ; 
+< tigerStack[ sp ] := 2; <| tsp | #1 |> ) 
+---
+>  in ( 
+> tigerStack[ sp - 1 ] := 2; <| tsp | #1 |> ) 
+3125,3126c3125,3126
+< ) else ( sp := sp - 1 ; 
+< tigerStack[ sp ] := 15; <| tsp | #2 |> ) 
+---
+> ) else ( 
+> tigerStack[ sp - 1 ] := 15; <| tsp | #2 |> ) 
+3142,3143c3142,3143
+<  in ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 12; <| tsp | #1 |> ) 
+---
+>  in ( 
+> tigerStack[ sp - 2 ] := 12; <| tsp | #1 |> ) 
+3159,3160c3159,3160
+<  in ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 22; <| tsp | #1 |> ) 
+---
+>  in ( 
+> tigerStack[ sp - 2 ] := 22; <| tsp | #1 |> ) 
+3423,3424c3423,3424
+<  in ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 22; <| tsp | #1 |> ) 
+---
+>  in ( 
+> tigerStack[ sp - 2 ] := 22; <| tsp | #1 |> ) 
+3605,3606c3605,3606
+< ) else ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 12; <| tsp | #2 |> ) 
+---
+> ) else (  
+> tigerStack[ sp - 2 ] := 12; <| tsp | #2 |> ) 
+3634,3635c3634,3635
+<  in ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 17; <| tsp | #1 |> ) 
+---
+>  in ( 
+> tigerStack[ sp - 2 ] := 17; <| tsp | #1 |> ) 
+3663,3664c3663,3664
+<  in ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 17; <| tsp | #1 |> ) 
+---
+>  in ( 
+> tigerStack[ sp - 2 ] := 17; <| tsp | #1 |> ) 
+3702,3703c3702,3703
+< ) else ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 17; <| tsp | #2 |> ) 
+---
+> ) else ( 
+> tigerStack[ sp - 2 ] := 17; <| tsp | #2 |> ) 
+3741,3742c3741,3742
+< ) else ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 17; <| tsp | #2 |> ) 
+---
+> ) else ( 
+> tigerStack[ sp - 2 ] := 17; <| tsp | #2 |> ) 
+3790,3791c3790,3791
+< ) else ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 17; <| tsp | #2 |> ) 
+---
+> ) else (
+> tigerStack[ sp - 2 ] := 17; <| tsp | #2 |> ) 
+3839,3840c3839,3840
+< ) else ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 17; <| tsp | #2 |> ) 
+---
+> ) else (
+> tigerStack[ sp - 2 ] := 17; <| tsp | #2 |> ) 
+3888,3889c3888,3889
+< ) else ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 17; <| tsp | #2 |> ) 
+---
+> ) else ( 
+> tigerStack[ sp - 2 ] := 17; <| tsp | #2 |> ) 
+3937,3938c3937,3938
+< ) else ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 17; <| tsp | #2 |> ) 
+---
+> ) else (
+> tigerStack[ sp - 2 ] := 17; <| tsp | #2 |> ) 
+4012,4013c4012,4013
+< ) else ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 17; <| tsp | #2 |> ) 
+---
+> ) else ( 
+> tigerStack[ sp - 2 ] := 17; <| tsp | #2 |> ) 
+4087,4088c4087,4088
+< ) else ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 17; <| tsp | #2 |> ) 
+---
+> ) else ( 
+> tigerStack[ sp - 2 ] := 17; <| tsp | #2 |> ) 
+4166,4167c4166,4167
+< ) else ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 17; <| tsp | #2 |> ) 
+---
+> ) else (
+> tigerStack[ sp - 2 ] := 17; <| tsp | #2 |> ) 
+4250,4251c4250,4251
+< ) else ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 17; <| tsp | #2 |> ) 
+---
+> ) else ( 
+> tigerStack[ sp - 2 ] := 17; <| tsp | #2 |> ) 
+4339,4340c4339,4340
+< ) else ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 12; <| tsp | #2 |> ) 
+---
+> ) else (  
+> tigerStack[ sp - 2 ] := 12; <| tsp | #2 |> ) 
+4612,4613c4612,4613
+< ) else ( sp := sp - 3 ; 
+< tigerStack[ sp ] := 12; <| tsp | #2 |> ) 
+---
+> ) else ( 
+> tigerStack[ sp - 3 ] := 12; <| tsp | #2 |> ) 
+4707,4708c4707,4708
+< ) else ( sp := sp - 3 ; 
+< tigerStack[ sp ] := 12; <| tsp | #2 |> ) 
+---
+> ) else ( 
+> tigerStack[ sp - 3 ] := 12; <| tsp | #2 |> ) 
+4724,4725c4724,4725
+<  in ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 16; <| tsp | #1 |> ) 
+---
+>  in ( 
+> tigerStack[ sp - 2 ] := 16; <| tsp | #1 |> ) 
+4768,4769c4768,4769
+< ) else ( sp := sp - 1 ; 
+< tigerStack[ sp ] := 18; <| tsp | #1 |> ) 
+---
+> ) else ( 
+> tigerStack[ sp - 1 ] := 18; <| tsp | #1 |> ) 
+4785,4786c4785,4786
+<  in ( sp := sp - 3 ; 
+< tigerStack[ sp ] := 12; <| tsp | #1 |> ) 
+---
+>  in ( 
+> tigerStack[ sp - 3 ] := 12; <| tsp | #1 |> ) 
+4802,4803c4802,4803
+<  in ( sp := sp - 3 ; 
+< tigerStack[ sp ] := 11; <| tsp | #1 |> ) 
+---
+>  in ( 
+> tigerStack[ sp - 3 ] := 11; <| tsp | #1 |> ) 
+4897,4898c4897,4898
+< ) else ( sp := sp - 1 ; 
+< tigerStack[ sp ] := 13; <| tsp | #2 |> ) 
+---
+> ) else ( 
+> tigerStack[ sp - 1 ] := 13; <| tsp | #2 |> ) 
+4914,4915c4914,4915
+<  in ( sp := sp - 3 ; 
+< tigerStack[ sp ] := 12; <| tsp | #1 |> ) 
+---
+>  in ( 
+> tigerStack[ sp - 3 ] := 12; <| tsp | #1 |> ) 
+4931,4932c4931,4932
+<  in ( sp := sp - 3 ; 
+< tigerStack[ sp ] := 22; <| tsp | #1 |> ) 
+---
+>  in (  
+> tigerStack[ sp - 3 ] := 22; <| tsp | #1 |> ) 
+5098,5100c5098,5100
+< ( sp := sp + 1; 
+< tigerStack[ sp ] := 7 ;<| goto (tsp) |  #1  |>)   else ( sp := sp + 1; 
+< tigerStack[ sp ] := 6 ;<| goto (tsp) |  #1  |>)  
+---
+> ( 
+> tigerStack[ sp + 1 ] := 7 ;<| goto (tsp) |  #1  |>)   else (
+> tigerStack[ sp + 1 ] := 6 ;<| goto (tsp) |  #1  |>)  
+5115,5116c5115,5116
+<  in ( sp := sp - 4 ; 
+< tigerStack[ sp ] := 12; <| tsp | #1 |> ) 
+---
+>  in ( 
+> tigerStack[ sp - 4 ] := 12; <| tsp | #1 |> ) 
+5390,5391c5390,5391
+<  in ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 19; <| tsp | #1 |> ) 
+---
+>  in ( 
+> tigerStack[ sp - 2 ] := 19; <| tsp | #1 |> ) 
+5407,5408c5407,5408
+<  in ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 14; <| tsp | #1 |> ) 
+---
+>  in (
+> tigerStack[ sp - 2 ] := 14; <| tsp | #1 |> ) 
+5453,5455c5453,5455
+< ( sp := sp + 1; 
+< tigerStack[ sp ] := 7 ;<| goto (tsp) |  #1  |>)   else ( sp := sp + 1; 
+< tigerStack[ sp ] := 6 ;<| goto (tsp) |  #1  |>)  
+---
+> ( 
+> tigerStack[ sp + 1 ] := 7 ;<| goto (tsp) |  #1  |>)   else (
+> tigerStack[ sp + 1 ] := 6 ;<| goto (tsp) |  #1  |>)  
+5470,5471c5470,5471
+<  in ( sp := sp - 0 ; 
+< tigerStack[ sp ] := 5; <| tsp | #1 |> ) 
+---
+>  in ( 
+> tigerStack[ sp - 0 ] := 5; <| tsp | #1 |> ) 
+5487,5488c5487,5488
+<  in ( sp := sp - 3 ; 
+< tigerStack[ sp ] := 4; <| tsp | #1 |> ) 
+---
+>  in (
+> tigerStack[ sp - 3 ] := 4; <| tsp | #1 |> ) 
+5576,5577c5576,5577
+< ) else ( sp := sp - 3 ; 
+< tigerStack[ sp ] := 9; <| tsp | #2 |> ) 
+---
+> ) else (
+> tigerStack[ sp - 3 ] := 9; <| tsp | #2 |> ) 
+5826,5827c5826,5827
+< ) else ( sp := sp - 5 ; 
+< tigerStack[ sp ] := 12; <| tsp | #2 |> ) 
+---
+> ) else (  
+> tigerStack[ sp - 5 ] := 12; <| tsp | #2 |> ) 
+5915,5916c5915,5916
+< ) else ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 20; <| tsp | #2 |> ) 
+---
+> ) else (
+> tigerStack[ sp - 2 ] := 20; <| tsp | #2 |> ) 
+6087,6088c6087,6088
+< ) else ( sp := sp - 1 ; 
+< tigerStack[ sp ] := 6; <| tsp | #1 |> ) 
+---
+> ) else (
+> tigerStack[ sp - 1 ] := 6; <| tsp | #1 |> ) 
+6217,6218c6217,6218
+<  in ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 5; <| tsp | #1 |> ) 
+---
+>  in (
+> tigerStack[ sp - 2 ] := 5; <| tsp | #1 |> ) 
+6234,6235c6234,6235
+<  in ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 5; <| tsp | #1 |> ) 
+---
+>  in (
+> tigerStack[ sp - 2 ] := 5; <| tsp | #1 |> ) 
+6323,6324c6323,6324
+< ) else ( sp := sp - 5 ; 
+< tigerStack[ sp ] := 9; <| tsp | #2 |> ) 
+---
+> ) else ( 
+> tigerStack[ sp - 5 ] := 9; <| tsp | #2 |> ) 
+6361,6362c6361,6362
+<  in ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 7; <| tsp | #1 |> ) 
+---
+>  in ( 
+> tigerStack[ sp - 2 ] := 7; <| tsp | #1 |> ) 
+6557,6558c6557,6558
+< ) else ( sp := sp - 7 ; 
+< tigerStack[ sp ] := 12; <| tsp | #2 |> ) 
+---
+> ) else ( 
+> tigerStack[ sp - 7 ] := 12; <| tsp | #2 |> ) 
+6574,6575c6574,6575
+<  in ( sp := sp - 2 ; 
+< tigerStack[ sp ] := 8; <| tsp | #1 |> ) 
+---
+>  in (
+> tigerStack[ sp - 2 ] := 8; <| tsp | #1 |> ) 
+6663,6664c6663,6664
+< ) else ( sp := sp - 6 ; 
+< tigerStack[ sp ] := 10; <| tsp | #2 |> ) 
+---
+> ) else ( 
+> tigerStack[ sp - 6 ] := 10; <| tsp | #2 |> ) 
+6859,6860c6859,6860
+< ) else ( sp := sp - 8 ; 
+< tigerStack[ sp ] := 10; <| tsp | #2 |> ) 
+---
+> ) else ( 
+> tigerStack[ sp - 8 ] := 10; <| tsp | #2 |> ) 
