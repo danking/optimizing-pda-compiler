@@ -216,11 +216,16 @@
 
 ;; - Macros pour la gestion des vecteurs de bits
 
+;; ILYA: This function toggles the bth bit of first 
+;; element of vector v.
 (def-macro (set-bit v b)
   (let ((x (quotient b (BITS-PER-WORD)))
 	(y (expt 2 (remainder b (BITS-PER-WORD)))))
      (vector-set! v x (logical-or (vector-ref v x) y))))
 
+;; ILYA: This function sets the nth element of vector v1
+;; to the union of nth element of vector v1 & nth element 
+;; of vector v2.
 (def-macro (bit-union v1 v2 n)
   (do ((i 0 (+ i 1)))
        ((= i n))
@@ -229,6 +234,7 @@
 
 ;; - Macro pour les structures de donnees
 
+;; ILYA: Macro's that do stuff
 (def-macro (new-core)              (make-vector 4 0))
 (def-macro (set-core-number! c n)  (vector-set! c 0 n))
 (def-macro (set-core-acc-sym! c s) (vector-set! c 1 s))
@@ -256,11 +262,12 @@
 (def-macro (red-rules c)            (vector-ref c 2))
 
 
-
+;; ILYA: make a vector of nelem elements and initialize all 
+;; elements to 0
 (def-macro (new-set nelem)
   (make-vector nelem 0))
 
-
+;; ILYA: (weird!) UNUSED
 (def-macro (vector-map f v)
   (let ((vm-n (- (vector-length v) 1)))
     (let loop ((vm-low 0) (vm-high vm-n))
@@ -274,35 +281,63 @@
 ;; - Constantes
 (define STATE-TABLE-SIZE 1009)
 
-
 ;; - Tableaux 
-(define rrhs         #f)
-(define rlhs         #f)
-(define ritem        #f)
-(define nullable     #f)
-(define derives      #f)
-(define fderives     #f)
-(define firsts       #f)
-(define kernel-base  #f)
-(define kernel-end   #f)
-(define shift-symbol #f)
-(define shift-set    #f)
-(define red-set      #f)
-(define state-table  #f)
-(define acces-symbol #f)
-(define reduction-table #f)
-(define shift-table  #f)
-(define consistent   #f)
-(define lookaheads   #f)
-(define LA           #f)
-(define LAruleno     #f)
-(define lookback     #f)
-(define goto-map     #f)
-(define from-state   #f)
-(define to-state     #f)
-(define includes     #f)
-(define F            #f)
-(define action-table #f)
+;; ILYA: for each global variable I provide a set of functions where
+;; it's being referenced (human-driven dataflow analysis)
+(define rrhs         #f) ;; initialize-all, pack-grammar, set-firsts, closure, 
+                         ;; build-relations, print-item, calculate-precedence
+
+(define rlhs         #f) ;; initialize-all, pack-grammar, set-derives,
+                         ;; set-nullable, print-item
+
+(define ritem        #f) ;; initialize-all, pack-grammar, set-nullable, 
+                         ;; set-firsts, closure, new-itemsets, 
+                         ;; save-reductions, set-max-rhs, build-relations, 
+                         ;; print-item, calculate-precedence
+
+(define nullable     #f) ;; initialize-all, set-nullable, initialize-F, 
+                         ;; build-relations
+(define derives      #f) ;; initialize-all, set-derives, set-firsts, 
+	                 ;; set-fderives, build-relations
+(define fderives     #f) ;; initialize-all, set-fderives, closure
+(define firsts       #f) ;; initialize-all, set-firsts, set-fderives
+(define kernel-base  #f) ;; initialize-all, allocate-item-sets, new-itemsets, 
+                         ;; get-state, new-state
+(define kernel-end   #f) ;; initialize-all, allocate-item-sets, new-itemsets
+(define shift-symbol #f) ;; initialize-all, new-itemsets, append-states
+(define shift-set    #f) ;; initialize-all, append-states, save-shifts
+(define red-set      #f) ;; initialize-all, allocate-storage
+(define state-table  #f) ;; initialize-all, get-state
+(define acces-symbol #f) ;; initialize-all, set-accessing-symbol, 
+                         ;; initialize-LA, set-goto-map, initialize-F, 
+                         ;; build-relations
+
+(define reduction-table #f) ;; initialize-all, set-reduction-table, 
+                            ;; initialize-LA, build-tables, 
+                            ;; compact-action-table
+(define shift-table  #f) ;; initialize-all, set-shift-table, initialize-LA, 
+                         ;; initialize-F, build-relations, build-tables
+(define consistent   #f) ;; initialize-all, initialize-LA, build-relations, 
+	                 ;; build-tables
+(define lookaheads   #f) ;; initialize-all, initialize-LA, add-lookahead-edge, 
+                         ;; compute-lookaheads, build-tables
+(define LA           #f) ;; initialize-all, initialize-LA, compute-lookaheads, 
+	                 ;; build-tables
+(define LAruleno     #f) ;; initialize-all, initialize-LA. add-lookahead-edge, 
+	                 ;; build-tables
+(define lookback     #f) ;; initialize-all, initialize-LA, add-lookback-edge, 
+	                 ;; compute-lookaheads, 
+
+(define goto-map     #f) ;; initialize-all, set-goto-map, map-goto
+(define from-state   #f) ;; initialize-all, set-goto-map, map-goto, 
+                         ;; build-relations
+(define to-state     #f) ;; initialize-all, set-goto-map, initialize-F, 
+                         ;; build-relations
+(define includes     #f) ;; initialize-all, build-relations, digraph, 
+(define F            #f) ;; initialize-all, initialize-F, compute-lookaheads, 
+                         ;; traverse
+(define action-table #f) ;; initialize-all, build-tables,
+                         ;; compact-action-table, print-states 
 
 ;; - Variables
 (define nitems          #f)
@@ -329,6 +364,7 @@
 (define rule-preced     #f)
 (define grammar #f)
 
+;; ILYA: TODO: construct a call graph
 (define (gen-lalr1 gram output-file . opt)
   (initialize-all)
   (rewrite-grammar 
