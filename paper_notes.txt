@@ -1,6 +1,8 @@
 Main Macros
-- (create-pda cfg [EOI-sym] [error-sym])
+[NEEDS REWORKING]
+- (cfg-pda cfg [EOI-sym] [error-sym])
   A macro that takes a CFG sexp as input and returns a PDA sexp
+  as a quoted list.
 - (run-pda pda lexer-exp case-macro action-func)
   A macro that takes a PDA sexp, a lexer expression, a macro to do switches, and
   a function to evaluate semantic actions.  It evaluates into a function that
@@ -39,6 +41,7 @@ Paper Outline
       - although this does not apply to generated PDAs
     ? possible to represent conflicts without changing the meaning
     - possible to verify the program's correctness
+      <big list of possible static analyses>
     - semantic action language is still distinct
   - Tools
     - A correctness function
