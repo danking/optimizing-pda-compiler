@@ -215,33 +215,75 @@
 
 ;; - Constantes
 (define STATE-TABLE-SIZE 1009)
+
+; This is the name of the start symbol used internally by the program.  This
+; should not appear in any grammar
+(define start '*start)
+
+; This is the name of the terminal symbol that the lexer sends which it reaches
+; this end of the input stream.
 (define eoi '*EOI*)
 
 ;; - Tableaux 
 ;; ILYA: for each global variable I provide a set of functions where
 ;; it's being referenced (human-driven dataflow analysis)
+
+; This is a vector of length 'nrules.  Each spot (except 0) corresponds to a
+; rule and contains the index into 'ritem where the items for the right-side
+; of this rule start.
 (define rrhs         #f) ;; initialize-all, pack-grammar, set-firsts, closure, 
                          ;; build-relations, print-item, calculate-precedence
 
+; This is a vector of length 'nrules.  Each spot (except 0) corresponds to a
+; rule and contains the non-terminal on the left-side of the rule.
 (define rlhs         #f) ;; initialize-all, pack-grammar, set-derives,
                          ;; set-nullable, print-item
 
+; This is a vector of length 'nitems + 1.  It contains of the items on the
+; right-side of all of rules.  'rrhs contains the index of where to start for a
+; particular rule.  The end of a rule is marked by a negative number.  The
+; negative number is the index into 'rrhs and 'rlhs for the rule in question
+; times -1.
 (define ritem        #f) ;; initialize-all, pack-grammar, set-nullable, 
                          ;; set-firsts, closure, new-itemsets, 
                          ;; save-reductions, set-max-rhs, build-relations, 
                          ;; print-item, calculate-precedence
 
+; Each element in this vector corresponds to an element in 'the-nonterminals.
+; The values are either #t or #f depending on whether the given non-terminal
+; symbol can derive the empty string or not.
 (define nullable     #f) ;; initialize-all, set-nullable, initialize-F, 
                          ;; build-relations
+
+; The is a vector of lists.  Each element corresponds to an element in
+; 'the-nonterminals.  The values are lists of indexes into 'rlhs & 'rrhs.  This
+; means that the non-terminal in question directly "derives" the corresponding
+; right-hand side.
 (define derives      #f) ;; initialize-all, set-derives, set-firsts, 
 	                 ;; set-fderives, build-relations
+
+; This is similar to 'derives except that the lists in this vector contain all
+; possible rules that can be derived from the corresponding terminal no matter
+; how many intermediate derivations are in-between.  For example, the start
+; symbol's list will contain every rule.  See 'set-fderives for more info.
 (define fderives     #f) ;; initialize-all, set-fderives, closure
+
+; This is a vector of size  'nvars with each element corresponding to an element
+; in 'the-nonterminals.  The values are sets of non-terminals where each
+; non-terminal in the set is capable of appearing at the begining of a
+; derivation from the non-terminal in question.
 (define firsts       #f) ;; initialize-all, set-firsts, set-fderives
+
+; This is a vector of size 'nsyms. <--------------------------------------- ???
 (define kernel-base  #f) ;; initialize-all, allocate-item-sets, new-itemsets, 
                          ;; get-state, new-state
+
+; This is a vector of size 'nsyms. <---------------------------------------- ???
 (define kernel-end   #f) ;; initialize-all, allocate-item-sets, new-itemsets
 (define shift-symbol #f) ;; initialize-all, new-itemsets, append-states
 (define shift-set    #f) ;; initialize-all, append-states, save-shifts
+
+; This is a vector of size 'nrules + 1 <------------------------------------ ???
 (define red-set      #f) ;; initialize-all, allocate-storage
 (define state-table  #f) ;; initialize-all, get-state
 (define acces-symbol #f) ;; initialize-all, set-accessing-symbol, 
@@ -276,11 +318,11 @@
                          ;; compact-action-table, print-states 
 
 ;; - Variables
-(define nitems          #f)
-(define nrules          #f)
-(define nvars           #f)
-(define nterms          #f)
-(define nsyms           #f)
+(define nitems          #f) ;The number of items (see pack-grammar)
+(define nrules          #f) ;The number of rules + 1
+(define nvars           #f) ;The number of non-terminal symbols
+(define nterms          #f) ;The number of terminal symbols
+(define nsyms           #f) ;'nterms + 'nvars
 (define nstates         #f)
 (define first-state     #f)
 (define last-state      #f)
@@ -294,15 +336,17 @@
 (define ngotos          #f)
 (define token-set-size  #f)
 (define grammar #f)
-(define global-terms #f)
+(define global-terms #f) ;The list of terminal symbols
 
-
-;; ILYA: TODO: construct a call graph
+; This is the start function.  'rewrite-grammar is where the real work starts.
+; TODO: List of the arguments to this function
+; TODO: Think of a beter name for this function.
 (define (gen-lalr1 gram output-file . opt)
   (initialize-all)
   (rewrite-grammar gram)
-  (output-to-file output-file opt) )  ;; see utils-io.scm)
+  (output-to-file output-file opt) )  ;; see utils-io.scm
 
+; Initializes all the global variables to their starting values
 (define (initialize-all)
   (set! rrhs         #f)
   (set! rlhs         #f)
@@ -344,8 +388,42 @@
   (set! ngotos          #f)
   (set! token-set-size  #f))
 
+; This functions as the high-level branching procudure.
+; It sets several global variables and then calls several other procedures to
+; do processing on those variables.
+;
+; Sample Grammar (used below)
+; S -> A       : $1
+;    | S A     : (+ $1 $2)
+; A -> ;empty  : 1
+;    | A x y   : (* $1 $2 $3)
+;
+; Arguments
+; - terms = The list of terminal symbols
+; - vars = The list of non-terminal symbols
+; - gram = A list that looks like the following:
+;          '( (S (A)
+;                (S A))
+;             (A ()
+;                (A x y)) )
+;          Note that, instead of symbols, the terminals and non-terminals will
+;          be replaced by the corresponding numbers.
+; - gram/actions = A list that looks like the following:
+;          '( ((S A) . $1)
+;             ((S S A) . (+ $1 $2))
+;             ((A) . 1)
+;             ((A x y) . (* $1 $2 $3)) )
+;          Again, symbols are replaced by corresponding numbers.
+; - la = The list of left-associative terminal symbols
+; - ra = The list of right-associative terminal symbols
+; - na = The list of non-associative terminal symbols
+; - prec = A list of lists.  Each internal list is a list of terminals in a
+;          particular precedence class.  The lists are in increasing order of
+;          precedence.
+; - rprec = A list containing either terminal symbols or #f.  Each element
+;           corresponds to an element in 'gram/actions.  It gives the precedence
+;           for the corresponding rule or #f if there is no precedence.
 (define (do-things terms vars gram gram/actions la ra na prec rprec)
-  (display gram/actions)
   (set! the-terminals (list->vector terms))
   (set! the-nonterminals (list->vector vars))
   (set! nterms (length terms))
@@ -368,11 +446,32 @@
     (build-tables prec ra na rule-preced)
     (compact-action-table) ) )
 
+; Small funciton used by 'process-assoc and 'rewrite-grammar to check the
+; validity of a given terminal.
+;
+; Arguments:
+; - term = the terminal symbol in question
+; - rv = a list of previous terminals
+; Returns
+;   If 'term is valid, then 'rv with 'term cons in front of it, otherwise it
+; calls 'error
 (define (check-term term rv)
   (cond ((not (valid-terminal? term)) (error "Invalid terminal:" term))
 	((member term rv) (error "Terminal previously defined:" term))
 	(else (cons term rv))) )
 
+; This function is used be 'rewrite-grammar to check the validity of terminals
+; that have defined associativity.
+;
+; Arguments
+; - it = The list of terminals in the association list
+; - r-terms = This list of termianls seen so far
+; - ass = null (used internally)
+; - prec = null (used internally)
+; Returns 3 values
+; 1) 'r-terms with all the newly defined terminals added to it
+; 2) (reverse it)
+; 3) (reverse it) -> Yes, the same as #2
 (define (process-assoc it r-terms ass prec)
   (if (null? it) 
       (values r-terms ass prec)
@@ -380,87 +479,111 @@
 		     (check-term (car it) r-terms) 
 		     (cons (car it) ass) 
 		     (cons (car it) prec))) )
-  
-(define (rewrite-grammar grammar) 
+
+(define (rewrite-grammar grammar)
   (let ( (terms (if (not (pair? grammar))
 		    (error "Grammar definition must be a non-empty list")
 		    (car grammar)) )
 	 (rules (cdr grammar)) )
-    (let term-loop ( (terms terms) 
+    (let term-loop ( (terms terms)
 		     (rev-terms '())
-		     (r-assoc '()) 
+		     (r-assoc '())
 		     (l-assoc '())
 		     (non-assoc '())
 		     (prec '()) )
-	(if (not (null? terms)) 
+	(if (not (null? terms))
 	    (if (not (pair? (car terms)))
+		; Handle terminals with no defined associativity
 		(term-loop (cdr terms)
 			   (check-term (car terms) rev-terms)
 			   r-assoc
 			   l-assoc
 			   non-assoc
 			   prec)
-		(receive (r-terms ass p) (process-assoc (cdar terms) 
-							rev-terms 
-							'() 
-							'()) 
+		; Handle an associativity list
+		(receive (r-terms ass p) (process-assoc (cdar terms)
+							rev-terms
+							'()
+							'())
 			 (cond ( (eq? (caar terms) 'right)
-				 (term-loop (cdr terms) 
+				 (term-loop (cdr terms)
 					    r-terms
 					    (append ass r-assoc)
-					    l-assoc 
+					    l-assoc
 					    non-assoc
 					    (cons p prec)) )
 			       ( (eq? (caar terms) 'left)
-				 (term-loop (cdr terms) 
+				 (term-loop (cdr terms)
 					    r-terms
 					    r-assoc
-					    (append ass l-assoc) 
+					    (append ass l-assoc)
 					    non-assoc
 					    (cons p prec)) )
 			       ( (eq? (caar terms) 'non)
-				 (term-loop (cdr terms) 
+				 (term-loop (cdr terms)
 					    r-terms
 					    r-assoc
 					    l-assoc
 					    (append ass non-assoc)
 					    (cons p prec)) )
-			       (else (error "Associativity unknown:" 
+			       (else (error "Associativity unknown:"
 					    (caar terms))) )))
-	    (begin 
-	      
-	      (any (lambda (r) 
+	    ; At this point the state of the variables is as follows:
+	    ; - terms is null
+	    ; - rev-terms is a list of all terminals (in reverse)
+	    ; - r-assoc is a list of all the right associative terminals
+	    ; - l-assoc is a list of all the left associative terminals
+	    ; - non-assoc is a list of all the non-associative terminals
+	    ; - prec is a list of lists.  Each internal list is a list of
+	    ;   terminals in a particular precedence class.  The lists are in
+	    ;   decreasing order of precedence.
+	    (begin
+
+	      ; Start by checking the production rules for rules that define an
+	      ; invalid non-terminal or a non-terminal with the same name as a
+	      ; terminal symbol
+	      (any (lambda (r)
 		     (if (not (pair? r))
 			 (error "Rule must be a non-empty list")
 			 (cond ((not (valid-nonterminal? (car r)))
 				(error "Invalid nonterminal:" (car r)))
 			       ((member (car r) rev-terms)
-				(error "Nonterminal previously defined:" 
+				(error "Nonterminal previously defined:"
 				       (car r))) )))
 		   rules)
-	      
-	      (let* ( (terms (cons eoi (reverse rev-terms)))
-		      (nonterms 
-		       (if (null? rules) 
+
+	      (let* (
+		      ; The list of terminals with EOI added
+		      (terms (cons eoi (reverse rev-terms)))
+
+		      ; The list of non-terminals with the start symbol added
+		      (nonterms
+		       (if (null? rules)
 			   (error "Grammar must contain at least one nonterminal")
-			   (cons '*start* 
-				 (fold-right 
+			   (cons start
+				 (fold-right
 				  (lambda (rule nts)
-				    (if (member (car rule) nts) 
+				    (if (member (car rule) nts)
 					(error "Nonterminal previously defined:"
 					       (car rule))
 					(cons (car rule) nts)))
 				  '()
-				  rules))))		    
+				  rules))))
+
+		      ; The result of calling 'rewrite-nonterm-def on all the
+		      ; non-terminal definitions.  See that function for more
+		      ; information.
 		      (compiled-nonterminals
 		       (map (lambda (rule)
 			      (rewrite-nonterm-def rule
 						   terms
 						   nonterms))
-			    (cons `(*start* ((,(cadr nonterms) ,eoi) 
+			    (cons `(,start ((,(cadr nonterms) ,eoi) 
 					     $1))
 				  rules))) )
-	
+
+		; Convert the various variables (mostly 'compiled-nonterminals)
+		; to the forms that 'do-things wants and then call it.
 		(do-things terms
 			   nonterms
 			   (map (lambda (x) (cons (caar x) (map cdr x)))
@@ -480,11 +603,26 @@
 			   (reverse prec)
 			   (cons #f
 				 (apply append
-					(map (lambda (x) (map 
-							  prod-action:prec
-							  x))
+					(map (lambda (x) (map prod-action:prec
+							      x))
 					     compiled-nonterminals))))))) ) ) )
 
+; The purpose of this function is to compute the values for 'nrules, 'nitems,
+; 'rlhs, 'rrhs, and 'ritem.  See the descriptions of those variables for more
+; information.
+;
+; Arguments:
+; - no-of-rules = The number of rules in the grammar (each non-terminal has at
+;                 least one rule)
+; - no-of-items = The number of symbols in the grammar.  Duplicates count as
+;                 many times as they appear.  The grammar below has 10 items.
+; - gram = The grammar in the format of
+;          '( (S (A)
+;                (S A))
+;             (A ()
+;                (A x y)) )
+; Returns:
+;   nothing (it produces side effects)
 (define (pack-grammar no-of-rules no-of-items gram)
   (set! nrules (+  no-of-rules 1))
   (set! nitems no-of-items)
@@ -493,16 +631,16 @@
   (set! ritem (make-vector (+ 1 nitems) #f))
 
   (let loop ((p gram) (item-no 0) (rule-no 1))
-	(if (not (null? p))
+    (if (not (null? p))
 	(let ((nt (caar p)))
 	  (let loop2 ((prods (cdar p)) (it-no2 item-no) (rl-no2 rule-no))
-		(if (null? prods)
+	    (if (null? prods)
 		(loop (cdr p) it-no2 rl-no2)
 		(begin
 		  (vector-set! rlhs rl-no2 nt)
 		  (vector-set! rrhs rl-no2 it-no2)
 		  (let loop3 ((rhs (car prods)) (it-no3 it-no2))
-			(if (null? rhs)
+		    (if (null? rhs)
 			(begin
 			  (vector-set! ritem it-no3 (- rl-no2))
 			  (loop2 (cdr prods) (+ it-no3 1) (+ rl-no2 1)))
@@ -510,8 +648,7 @@
 			  (vector-set! ritem it-no3 (car rhs))
 			  (loop3 (cdr rhs) (+ it-no3 1))))))))))) )
 
-;; Fonction set-derives
-;; --------------------
+; This function computes the value of 'derives.
 (define (set-derives)
   (let ( (delts (make-vector (+ nrules 1) 0))
 	 (dset  (make-vector nvars -1)) )
@@ -523,7 +660,7 @@
 		  (vector-set! delts j (cons i (vector-ref dset lhs)))
 		  (vector-set! dset lhs j)
 		  (loop (+ i 1) (+ j 1)))
-		(loop (+ i 1) j)))))   
+		(loop (+ i 1) j)))))   ;<----------------------------------- ???
     (set! derives (make-vector nvars 0))
     (let loop ((i 0))
       (if (< i nvars)
@@ -535,6 +672,7 @@
 	    (vector-set! derives i q)
 	    (loop (+ i 1)))))) )
 
+; This function computes the value of 'nullable
 (define (set-nullable)
   (set! nullable (make-vector nvars #f))
   (let ((squeue (make-vector nvars #f))
@@ -591,17 +729,13 @@
 			      (loop2 (car x) s4))))
 		    (loop (+ s1 1) s4)))))))))
 		  
-
-
-; Fonction set-firsts qui calcule un tableau de taille
-; nvars et qui donne, pour chaque non-terminal X, une liste des
-; non-terminaux pouvant apparaitre au debut d'une derivation a
-; partir de X.
-
+; Computes the value of 'firsts.
 (define (set-firsts)
   (set! firsts (make-vector nvars '()))
-  
-  ;; -- initialization
+
+  ; For each non-terminal, and for each rule, if the rule begins with a
+  ; non-terminal, then that non-terminal is in the first set for the left-hand
+  ; side non-terminal.
   (let loop ((i 0))
     (if (< i nvars)
 	(let loop2 ((sp (vector-ref derives i)))
@@ -612,7 +746,9 @@
 		    (vector-set! firsts i (sinsert sym (vector-ref firsts i))))
 		(loop2 (cdr sp)))))))
 
-  ;; -- reflexive and transitive closure
+  ; If non-terminal A is in the first set for non-terminal B, then the first set
+  ; for non-terminal B includes the first set for non-terminal A.
+  ; (transitive closure)
   (let loop ((continue #t))
     (if continue
 	(let loop2 ((i 0) (cont #f))
@@ -629,7 +765,8 @@
 		    (begin
 		      (vector-set! firsts i y)
 		      (loop2 (+ i 1) #t))))))))
-  
+
+  ; The first set for a given non-terminal includes itself.  (reflexive closure)
   (let loop ((i 0))
     (if (< i nvars)
 	(begin
@@ -642,17 +779,25 @@
 ; Fonction set-fderives qui calcule un tableau de taille
 ; nvars et qui donne, pour chaque non-terminal, une liste des regles pouvant
 ; etre derivees a partir de ce non-terminal. (se sert de firsts)
+;
+; Google Translation:
+; Function set-fderives which calculates a table of size
+; nvars and which gives, for each not-terminal, a list of the rules being able
+; to be derivees from this not-terminal.  (is useful itself of firsts)
 
+; This function calculates the value of 'fderives.
+; The value of each element is the union of all the 'derives sets for every
+; non-terminal in the corresponding element of 'firsts.
 (define (set-fderives)
   (set! fderives (make-vector nvars #f))
 
-  (set-firsts) 
-   (let loop ((i 0))
+  (set-firsts)
+  (let loop ((i 0))
     (if (< i nvars)
 	(let ((x (let loop2 ((l (vector-ref firsts i)) (fd '()))
-		   (if (null? l) 
+		   (if (null? l)
 		       fd
-		       (loop2 (cdr l) 
+		       (loop2 (cdr l)
 			      (sunion (vector-ref derives (car l)) fd))))))
 	  (vector-set! fderives i x)
 	  (loop (+ i 1))))))
@@ -690,18 +835,13 @@
 		(loop2 (cdr c) (cons (car c) itemsetv2))
 		(reverse itemsetv2)))))) )
 
-(define (allocate-item-sets)
-  (set! kernel-base (make-vector nsyms 0))
-  (set! kernel-end  (make-vector nsyms #f)))
-
-
+; This function is called by 'generate-states.
 (define (allocate-storage)
-  (allocate-item-sets)
+  (set! kernel-base (make-vector nsyms 0))
+  (set! kernel-end  (make-vector nsyms #f))
   (set! red-set (make-vector (+ nrules 1) 0)))
 
-;; --
-
-
+; This function is called by 'generate-states to do some initial setup.
 (define (initialize-states)
   (let ((p (new-core)))
     (set-core-number! p 0)
@@ -731,10 +871,12 @@
 	      (save-shifts x))
 	  (loop (cdr this-state))))))
 
-
 ;; Fonction calculant les symboles sur lesquels il faut "shifter" 
 ;; et regroupe les items en fonction de ces symboles
-
+;
+; Google Translation:
+; Function calculating the symbols on which one needs "shifter"
+; and gathers the items according to these symbols
 (define (new-itemsets itemset)
   ;; - Initialization
   (set! shift-symbol '())
@@ -1317,65 +1459,90 @@
 
 ;; --
 
+; This function is used by 'rewrite-grammar to convert a non-terminal definition
+; into a more useable form.
+;
+; Arguments:
+; - nonterm-def = a non-terminal definition from the grammar
+; - terms       = the list of terminal symbols
+; - nonterms    = the list of non-terminal symbols
+; Returns
+;   A list of 'prod-action records.  The fields in each record are as follows:
+; - production = A list of the (non-)terminals involved in the production.
+;                Rather than symbols, their numeric index into 'terms or
+;                'non-terms is given (with 'terms considered to be appended to
+;                'non-terms).  The first element is the non-terminal that the
+;                sequence reduceds to.  The rest of the elements are the right
+;                side of the production.
+; - action     = The (unmodified) action for the given production
+; - prec       = The terminal symbol that gives the precedence for this
+;                production or #f if there is no precedence.
 (define (rewrite-nonterm-def nonterm-def terms nonterms)
-  (let* ( (No-NT (length nonterms)) 
-	  (encode (lambda (x) 
+  (let* ( (No-NT (length nonterms))
+
+	  ; Encode takes either a terminal or non-terminal symbol and converts
+	  ; the symbol into a number.  This number is based on its position in
+	  ; either 'terms or 'nonterms.
+	  (encode (lambda (x)
 		    (let ((PosInNT (list-index (lambda (term)
 						 (equal? x term)) nonterms)))
 		      (if PosInNT
 			  PosInNT
-			  (let ((PosInT (list-index (lambda (term) 
+			  (let ((PosInT (list-index (lambda (term)
 						      (equal? x term)) terms)))
 			    (if PosInT
 				(+ No-NT PosInT)
 				(error "undefined symbol : " x))))))) )
-     
-    (if (not (pair? (cdr nonterm-def)))
-	(error "At least one production needed for nonterminal" (car nonterm-def))
-	(let ((name (symbol->string (car nonterm-def))))
-	  (let loop1 ((lst (cdr nonterm-def))
-		      (i 1)
-		      (rev-productions-and-actions '()))
-	    (if (not (pair? lst))
-		(reverse rev-productions-and-actions)
-		(let* ((prec (if (equal? (length (car lst)) 3)
-				 (cadaar lst)
-				 #f))
-		       (rhs  (if (equal? (length (car lst)) 3)
-				 (list-ref (car lst) 1)
-				 (caar lst)))
-		       (rest  (cdr lst))
-		       (prod (map encode (cons (car nonterm-def) rhs))))
-		  (for-each (lambda (x)
-			      (if (not (or (member x terms) (member x nonterms)))
-				  (error "Invalid terminal or nonterminal" x)))
-			    rhs)
-		  (loop1 rest
-			 (+ i 1)
-			 (cons
-			  (make-prod-action prod 
-					    (if (equal? (length (car lst)) 3)
-						(list-ref (car lst) 2)
-						(list-ref (car lst) 1))
-					    prec)
-			  rev-productions-and-actions)))))))) )
 
+    (if (not (pair? (cdr nonterm-def)))
+	(error "At least one production needed for nonterminal"
+	       (car nonterm-def))
+	(let loop ((lst (cdr nonterm-def))
+		   (i 1)
+		   (rev-productions-and-actions '()))
+	  (if (not (pair? lst))
+	      (reverse rev-productions-and-actions)
+	      (let* ((prec (if (equal? (length (car lst)) 3)
+			       (cadaar lst)
+			       #f))
+		     (rhs  (if (equal? (length (car lst)) 3)
+			       (list-ref (car lst) 1)
+			       (caar lst)))
+		     (rest  (cdr lst))
+		     (prod (map encode (cons (car nonterm-def) rhs))))
+		(for-each (lambda (x)
+			    (if (not (or (member x terms) (member x nonterms)))
+				(error "Invalid terminal or nonterminal" x)))
+			  rhs)
+		(loop rest
+		      (+ i 1)
+		      (cons
+		       (make-prod-action prod
+					 (if (equal? (length (car lst)) 3)
+					     (list-ref (car lst) 2)
+					     (list-ref (car lst) 1))
+					 prec)
+		       rev-productions-and-actions))))))) )
+
+; Checks to see if its argument is a valid non-terminal symbol
 (define (valid-nonterminal? x)
   (symbol? x))
 
+; Checks to see if its argument is a valid terminal symbol
 (define (valid-terminal? x)
-  (symbol? x))              ; DB 
+  (symbol? x))
 
 ;; ---------------------------------------------------------------------- ;;
 ;; Miscellaneous                                                          ;;
 ;; ---------------------------------------------------------------------- ;;
 
-(define (sunion lst1 lst2)		; union of sorted lists
+; Takes two sets (represented as sorted lists) and computes their union.
+(define (sunion lst1 lst2)
   (let loop ((L1 lst1)
 	     (L2 lst2))
     (cond ((null? L1)    L2)
 	  ((null? L2)    L1)
-	  (else 
+	  (else
 	   (let ((x (car L1)) (y (car L2)))
 	     (cond
 	      ((> x y)
@@ -1386,9 +1553,10 @@
 	       (loop (cdr L1) L2))
 	      ))))))
 
+; Takes a set (represented as a sorted list) and adds 'elem to the set.
 (define (sinsert elem lst)
   (let loop ((l1 lst))
-    (if (null? l1) 
+    (if (null? l1)
 	(cons elem l1)
 	(let ((x (car l1)))
 	  (cond ((< elem x)
@@ -1497,26 +1665,36 @@
 	    i
 	    (loop (+ 1 i))))))
 
+; This function calculates figures out the precedence for each rule that did not
+; have a precedence symbol specified manually.  It does this by going through
+; the items on the right hand side of the rule and finding the last terminal
+; symbol.  The precedence of that symbol, if it has one, then becomes the
+; precedence for the rule.
+;
+; Arguments:
+; - rule-preced = A vector containing the manually specified precedence symbol for
+;                 the corresponding rule in 'rrhs & 'rlhs or #f if it was not
+;                 specified.
+; Rules:
+;   nothing (it modifies the value of 'rule-preced)
 (define (calculate-precedence rule-preced)
   (let loop ((x 1))
     (if (< x nrules)
 	(if (vector-ref rule-preced x)
 	    (loop (+ x 1))
 	    (begin
-	      (vector-set! rule-preced 
+	      (vector-set! rule-preced
 			   x
 			   (let iloop ((i (vector-ref rrhs x))
 				       (psf #f))
 			     (let ((t (vector-ref ritem i)))
-			       
 			       (cond ((< t -1)
 				      psf)
 				     ((< t nvars)    ; a non-terminal
 				      (iloop (+ 1 i) psf))
 				     (else
-				      (iloop (+ 1 i) 
-					     (vector-ref 
+				      (iloop (+ 1 i)
+					     (vector-ref
 					      the-terminals
 					      (- t nvars))))))))
 	      (loop (+ x 1)))))))
-
