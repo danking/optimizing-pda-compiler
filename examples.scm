@@ -19,7 +19,7 @@
 	    (right THEN ELSE DO ASSIGN)
 
 	    (error *Error)
-	    (eoi *EOI))
+	    (eos *EOI))
 
     ;; Productions
     ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -79,15 +79,15 @@
 	      (=> (lvalue ASSIGN exp)			#f)
 	      (=> (idbrack OF exp)			#f)
 	      (=> (LET decls IN expseq END)		#f)
-	      (=> (ID LPAREN args RPAREN)			#f)
+	      (=> (ID LPAREN args RPAREN)		#f)
 	      (=> (lvalue)				#f)
 	      (=> (INT)					#f)
 	      (=> (STRING)				#f)
-	      (=> (binop)					#f)
-	      (=> (LPAREN expseq RPAREN)			#f)
+	      (=> (binop)				#f)
+	      (=> (LPAREN expseq RPAREN)		#f)
 	      (=> UMINUS (MINUS exp)			#f)
-	      (=> (ID LBRACE fieldassigns RBRACE)		#f)
-	      (=> (BREAK)					#f)
+	      (=> (ID LBRACE fieldassigns RBRACE)	#f)
+	      (=> (BREAK)				#f)
 	      (=> (NIL)					#f))
     
     ;; Comma-separated list of expressions, possibly empty.

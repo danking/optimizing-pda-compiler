@@ -27,9 +27,9 @@
   ;; number.
   (num-nonterminals #f)
 
-  ;; This will either by a Scheme symbol of #f, depending on whether a symbol to
-  ;; mark "End of Stream" was declared in the grammar.
-  (eos-symbol #f)
+  ;; This is the start symbol named by the user.  The *real* start symbol that
+  ;; was created by this program is always at index 0 in SYMBOLS.
+  (user-start-symbol #f)
 
   ;; This will be either a Scheme symbol or #f, depending on whether or not an
   ;; error symbol was defined for the grammar.  If one was defined, it will be
@@ -188,7 +188,10 @@
   ;; This is the action table that goes into the LR-automaton.  It is generated
   ;; seperately because conflict resolution has to be dealt with when
   ;; constructing it.
-  (action-table #f))
+  (state-table #f)
+
+  ;; This contains the list of global comments to place in the output
+  (comments '()))
 
 ;;; This record defines an individual state in the LR(0) state machine.
 (define-record state
@@ -385,8 +388,8 @@
     (compute-follow lalr-record)
     (compute-LA lalr-record)
 
-    (compute-action-table lalr-record)
-    (construct-LR-program lalr-record)))
+    (compute-state-table lalr-record)
+    (construct-PDA lalr-record)))
 
 ;;;-----------------------------------------------------------------------------
 ;;; This function takes the grammar as it was passed in and converts into the
@@ -396,7 +399,7 @@
 ;;; This function sets the values of the following LALR-CONSTRUCTOR fields:
 ;;; - SYMBOLS
 ;;; - NUM-NONTERMINALS
-;;; - EOS-SYMBOL
+;;; - USER-START-SYMBOL
 ;;; - ERROR-SYMBOL
 ;;; - NO-SHIFT
 ;;; - RULE-LHS
@@ -414,7 +417,7 @@
 	 (num-terminals (length terminals))
 	 (nonterminals (extract-nonterminals rules))
 	 (num-nonterminals (+ 1 (length nonterminals)))
-	 (eop (if (null? eop) (list eos) eop)))
+	 (eop (if (and (null? eop) eos) (list eos) eop)))
     (receive (symbols reverse-map)
 	     (create-symbol-map nonterminals num-nonterminals
 				terminals num-terminals)
@@ -425,8 +428,7 @@
 				       (map (lambda (eop)
 					      (list (list start eop) #f))
 					    eop)) rules)))
-	 (if (or (not (symbol? start))
-		 (not (table-ref reverse-map start))
+	 (if (or (not (table-ref reverse-map start))
 		 (not (< (table-ref reverse-map start) num-nonterminals)))
 	     (error "start must be a nonterminal symbol"))
 
@@ -455,8 +457,9 @@
        ;;Set the last few fields then return the record
        (set-lalr-constructor:num-nonterminals lalr-record num-nonterminals)
        (set-lalr-constructor:symbols lalr-record symbols)
+       (set-lalr-constructor:user-start-symbol lalr-record
+					       (table-ref reverse-map start))
        (set-lalr-constructor:error-symbol lalr-record err)
-       (set-lalr-constructor:eos-symbol lalr-record eos)
        (set-lalr-constructor:no-shift lalr-record no-shift))
 
     lalr-record))
@@ -471,7 +474,7 @@
 (define (extract-nonterminals rules)
   (fold-right
    (lambda (rule non-terms)
-     (let ((nt (car rules)))
+     (let ((nt (car rule)))
        (if (not (symbol? nt))
 	   (error "Invalid non-terminal name:" nt))
        (if (member nt non-terms)
@@ -492,7 +495,7 @@
 (define (create-symbol-map nonterminals num-nonterminals terminals num-terms)
   (let ((symbol-map (make-vector (+ num-nonterminals num-terms)))
 	(reverse-map (make-symbol-table)))
-    (let loop ((i (+ num-nonterminals 1)) (terminals terminals))
+    (let loop ((i num-nonterminals) (terminals terminals))
       (if (pair? terminals)
 	  (let ((terminal (car terminals)))
 	    (if (table-ref reverse-map terminal)
@@ -514,6 +517,8 @@
 ;;; start symbol and insures that it does not conflict with any symbols already
 ;;; existing in the grammar.
 (define (create-start-symbol start reverse-map)
+  (if (not (symbol? start))
+      (error "Invalid start symbol:" start))
   (let loop ((sym '*start))
     (if (table-ref reverse-map sym)
 	(loop (string->symbol (string-append (symbol->string sym) "*")))
@@ -581,7 +586,8 @@
 			  (cond ((eq? num #f)
 				 (error "Unknown symbol:" (car syms)))
 				((and (member (car syms) no-shift)
-				      (not (eq? (car nonterm-decls) new-start)))
+				      (not (eq? (caar nonterm-decls)
+						new-start)))
 				 (error "No-Shift tokens cannot appear in the grammar:" (car syms)))
 				(else
 				 (vector-set! rule-items item-num num)
@@ -599,9 +605,9 @@
 (define (allocate-rule-vectors rules)
   (let rule-loop ((num-rules 1) (num-items 1) (rules rules))
     (if (pair? rules)
-	(let item-loop ((num-rules num-rules) (num-items num-items)
+	(let item-loop ((num-items num-items) (num-rules num-rules)
 			(right-sides (cdar rules)))
-	  (cond ((not (pair? right-sides))
+	  (cond ((null? right-sides)
 		 (rule-loop num-rules num-items (cdr rules)))
 		((= (length (car right-sides)) 2)
 		 (item-loop (+ (length (caar right-sides)) 1 num-items)
@@ -844,6 +850,7 @@
 (define (compute-LR0-states lalr-record)
   (let* ((num-symbols (vector-length (lalr-constructor:symbols lalr-record)))
 	 (num-nonterminals (lalr-constructor:num-nonterminals lalr-record))
+	 (user-start-symbol (lalr-constructor:user-start-symbol lalr-record))
 	 (rule-rhs (lalr-constructor:rule-rhs lalr-record))
 	 (rule-items (lalr-constructor:rule-items lalr-record))
 	 (derives (lalr-constructor:derives lalr-record))
@@ -877,7 +884,7 @@
 						 1)
 					      symbol next-items)))
 			     (if (and (= (state:number state) 0)
-				      (< symbol num-nonterminals))
+				      (= symbol user-start-symbol))
 				 (set-lalr-constructor:accept-state lalr-record
 				   (state:number new-state)))
 			     (table-set! item-map next-items new-state)
@@ -1328,10 +1335,11 @@
 ;;; LR-STATE:SHIFT-REDUCE-TABLE in records.scm.  Also note that all the rule
 ;;; numbers are reduced by one in the final output.  This is because there is no
 ;;; internal rule 0 but there will be in the output record.
-(define (compute-action-table lalr-record)
+(define (compute-state-table lalr-record)
   (let* ((symbols (lalr-constructor:symbols lalr-record))
 	 (num-symbols (vector-length symbols))
 	 (num-nonterminals (lalr-constructor:num-nonterminals lalr-record))
+	 (rule-lhs (lalr-constructor:rule-lhs lalr-record))
 	 (rule-rhs (lalr-constructor:rule-rhs lalr-record))
 	 (rule-items (lalr-constructor:rule-items lalr-record))
 	 (states (lalr-constructor:states lalr-record))
@@ -1341,15 +1349,14 @@
 	 (reduction-map (lalr-constructor:reduction-map lalr-record))
 	 (reduction-rule-num (lalr-constructor:reduction-rule-num lalr-record))
 	 (LA (lalr-constructor:LA lalr-record))
-	 (action-table (make-vector num-states))
+	 (state-table (make-vector num-states '()))
 	 (workspace (make-vector (+ num-symbols 1))))
     (let state-loop ((state-num 0))
       (if (< state-num num-states)
 	  (let* ((state (vector-ref states state-num))
-		 (reductions (state:reductions state))
-		 (LR-state (make-LR-state #f #f #f)))
+		 (reductions (state:reductions state)))
 	    ;; Start by clearing the workspace
-	    (vector-fill! workspace #f)
+	    (vector-fill! workspace '())
 
 	    ;; Add the reductions
 	    (if (and (pair? reductions) (vector-ref consistent state-num))
@@ -1396,17 +1403,18 @@
 		   (let loop ((symbol-num num-nonterminals))
 		     (cond ((= symbol-num num-symbols)
 			    ;; If we get here, the range was filled.
-			    (vector-set! workspace num-symbols #f))
-			   ((vector-ref workspace symbol-num)
+			    (vector-set! workspace num-symbols '()))
+			   ((not (null? (vector-ref workspace symbol-num)))
 			    (loop (+ symbol-num 1))))))
 		  (else ; There are multiple reductions.  Make one the default
 		   (let ((red-count (make-integer-table)))
 		     (let loop ((symbol-num num-nonterminals)
 				(cur-max -1) (cur-rule #f))
 		       (if (< symbol-num num-symbols)
-			   (let ((action (vector-ref workspace symbol-num)))
-			     (if (and action (< action 0))
-				 (let* ((count (table-ref red-count action))
+			   (let ((actions (vector-ref workspace symbol-num)))
+			     (if (and (pair? actions) (< (car actions) 0))
+				 (let* ((action (car actions))
+					(count (table-ref red-count action))
 					(new-count (if count (+ count 1) 0)))
 				   (table-set! red-count action new-count)
 				   (if (> new-count cur-max)
@@ -1419,70 +1427,94 @@
 			     (let loop ((symbol-num num-nonterminals))
 			       (if (< symbol-num num-symbols)
 				   (begin
-				     (if (eq? (vector-ref workspace symbol-num)
-					      cur-rule)
-					 (vector-set! workspace symbol-num #f))
+				     (if (equal? (vector-ref workspace
+							     symbol-num)
+						 (list cur-rule))
+					 (vector-set! workspace symbol-num '()))
 				     (loop (+ symbol-num 1)))))))))))
 
 	    ;; Add the goto actions
-	    (let goto-loop ((symbol-num 0) (gotos '()))
-	      (cond ((>= symbol-num num-nonterminals)
-		     (set-LR-state:goto-table LR-state gotos))
-		    ((vector-ref workspace symbol-num) =>
-		     (lambda (state)
-		       (goto-loop (+ symbol-num 1)
-				  (cons (list (vector-ref symbols symbol-num)
-					      'goto state)
-					gotos))))
+	    (let goto-loop ((symbol-num (- num-nonterminals 1)) (gotos '()))
+	      (cond ((< symbol-num 0)
+		     (vector-set! state-table state-num gotos))
+		    ((null? (vector-ref workspace symbol-num))
+		     (goto-loop (- symbol-num 1) gotos))
 		    (else
-		     (goto-loop (+ symbol-num 1) gotos))))
+		     (goto-loop
+		      (- symbol-num 1)
+		      (cons (list 'GOTO (vector-ref symbols symbol-num)
+				  (state->symbol (car (vector-ref workspace
+								  symbol-num))))
+			    gotos)))))
+
+	    ;; Add the default action, if any
+	    (let ((default (vector-ref workspace num-symbols)))
+	      (if (not (null? default))
+		  (vector-set! state-table state-num
+			       (cons (list 'REDUCE '() (rule->symbol default))
+				     (vector-ref state-table state-num)))))
 
 	    ;; Add the shift/reduce actions
-	    (let action-loop ((symbol-num num-nonterminals)
-			      (actions (if (vector-ref workspace num-symbols)
-					   (list (list #t 'reduce
-						       (- (+ (vector-ref
-							      workspace
-							      num-symbols) 1))))
-					   '())))
-	      (cond ((>= symbol-num num-symbols)
-		     (set-LR-state:shift-reduce-table LR-state actions))
-		    ((vector-ref workspace symbol-num) =>
-		     (lambda (action)
-		       (let* ((sym (vector-ref symbols symbol-num))
-			      (out-action
-			       (cond ((< action 0)
-				      (list sym 'reduce (- (+ action 1))))
-				     ((= state-num accept-state)
-				      (list sym 'accept))
-				     (else
-				      (list sym 'shift action)))))
-			 (action-loop (+ symbol-num 1)
-				      (cons out-action actions)))))
+	    (let action-loop ((symbol-num (- num-symbols 1)) (comment #f)
+			      (result (vector-ref state-table state-num)))
+	      (cond ((< symbol-num num-nonterminals)
+		     (vector-set! state-table state-num result))
+		    ((null? (vector-ref workspace symbol-num))
+		     (action-loop (- symbol-num 1) #f result))
 		    (else
-		     (action-loop (+ symbol-num 1) actions))))
+		     (let* ((actions (vector-ref workspace symbol-num))
+			    (action (car actions))
+			    (lookahead (list (vector-ref symbols symbol-num)))
+			    (encoding*
+			     (cond ((< action 0)
+				    (list 'REDUCE lookahead
+					  (rule->symbol action)))
+				   ((= state-num accept-state)
+				    (list 'ACCEPT lookahead))
+				   (else
+				    (list 'SHIFT lookahead
+					  (state->symbol action)))))
+			    (encoding (if comment
+					  (list 'COMMENT encoding*)
+					  encoding*)))
+		       (vector-set! workspace symbol-num (cdr actions))
+		       (action-loop symbol-num #t (cons encoding result))))))
 
 	    ;; Add the list of items
-	    (let item-loop ((our-items (compute-closure state lalr-record))
-			    (output-items '()))
-	      (if (pair? our-items)
-		  (let ((item (car our-items)))
-		    (let search-loop ((cur-item item))
-		      (if (>= (vector-ref rule-items cur-item) 0)
-			  (search-loop (+ cur-item 1))
-			  (let* ((rule (- (vector-ref rule-items cur-item)))
-				 (first-item (vector-ref rule-rhs rule)))
-			    (item-loop (cdr our-items)
-				       (cons (cons (- rule 1)
-						   (- item first-item))
-					     output-items))))))
-		  (set-LR-state:items LR-state output-items)))
+	    (let item-loop ((items (compute-closure state lalr-record))
+			    (result (vector-ref state-table state-num)))
+	      (if (pair? items)
+		  (let search-loop ((last-item (car items)))
+		    (if (>= (vector-ref rule-items last-item) 0)
+			(search-loop (+ last-item 1))
+			(let cons-loop ((item (- last-item 1))
+					(dot-item (car items)) (rule '()))
+			  (cond ((and dot-item (< item dot-item))
+				 (cons-loop item #f (cons "." rule)))
+				((or (< item 0)
+				     (< (vector-ref rule-items item) 0))
+				 (item-loop (cdr items)
+				  (cons (cons*
+					 'COMMENT
+					 (vector-ref symbols
+					  (vector-ref rule-lhs
+					   (- (vector-ref rule-items
+							  last-item))))
+					 "=>" rule) result)))
+				(else
+				 (cons-loop (- item 1) dot-item
+					    (cons (vector-ref symbols
+						   (vector-ref rule-items item))
+						  rule)))))))
+		  (vector-set! state-table state-num result)))
 
 	    ;; Finish up this state and to to the next
-	    (vector-set! action-table state-num LR-state)
+	    (vector-set! state-table state-num
+			 (cons* 'STATE (state->symbol state-num)
+				(vector-ref state-table state-num)))
 	    (state-loop (+ state-num 1)))))
 
-    (set-lalr-constructor:action-table lalr-record action-table)))
+    (set-lalr-constructor:state-table lalr-record state-table)))
 
 ;;; This is a helper function used by COMPUTE-ACTION-TABLE.  It is used to
 ;;; resolve conflicts that are encountered when building the action table.  It
@@ -1500,14 +1532,19 @@
 ;;;      there will never be a Shift/Shift conflict.
 ;;; - NEW-ACTION = This is the new candidate action
 ;;; - LALR-RECORD = The LALR-CONSTRUCTOR which contains the precedence maps
-(define (resolve-conflict state-num terminal cur-action new-action lalr-record)
-  (cond ((eq? cur-action #f)
-	 new-action)
-	((and (< cur-action 0) (< new-action 0))
-	 (display "Reduce/Reduce conflict in state: ")
-	 (display state-num)
-	 (newline)
-	 (max cur-action new-action))
+(define (resolve-conflict state-num terminal cur-actions new-action lalr-record)
+  (cond ((null? cur-actions)
+	 (list new-action))
+	((and (< (car cur-actions) 0) (< new-action 0))
+	 (let ((message (string-append "Reduce/Reduce conflict in state: s"
+				       (number->string state-num)))
+	       (comments (lalr-constructor:comments lalr-record)))
+	   (display message) (newline)
+	   (set-lalr-constructor:comments lalr-record (cons (list message)
+							    comments))
+	   (if (< (car cur-actions) new-action)
+	       (cons new-action cur-actions)
+	       (cons* (car cur-actions) new-action (cdr cur-actions)))))
 	(else
 	 (let* ((symbols (lalr-constructor:symbols lalr-record))
 		(term-base (lalr-constructor:num-nonterminals lalr-record))
@@ -1515,32 +1552,40 @@
 		(assoc-map (lalr-constructor:associativity-map lalr-record))
 		(rule-precedence (lalr-constructor:rule-precedence lalr-record))
 		(term-prec (vector-ref precedence-map (- terminal term-base)))
-		(rule-prec (vector-ref rule-precedence (- cur-action)))
-		(associativity (vector-ref assoc-map term-prec)))
+		(rule-prec (vector-ref rule-precedence (- (car cur-actions))))
+		(associativity (vector-ref assoc-map term-prec))
+		(comments (lalr-constructor:comments lalr-record)))
 	   (cond ((> term-prec rule-prec)
-		  new-action)
+		  (cons new-action (cdr cur-actions)))
 		 ((< term-prec rule-prec)
-		  cur-action)
+		  cur-actions)
 		 ;; At this point, we know the two are equal
 		 ((= term-prec 0)
-		  (display "Shift/Reduce conflict in state: ")
-		  (display state-num) (newline)
-		  (display "   Shift: ")
-		  (display (vector-ref symbols terminal)) (newline)
-		  (display "   Reduce: ")
-		  (display (- (+ cur-action 1))) (newline)
-		  new-action)
+		  (let ((message (string-append
+				  "Shift/Reduce conflict in state: s"
+				  (number->string state-num))))
+		    (display message) (newline)
+		    (set-lalr-constructor:comments lalr-record
+						   (cons (list message)
+							 comments)))
+		  (cons new-action cur-actions))
 		 ((eq? associativity 'left)
-		  cur-action)
+		  cur-actions)
 		 ((eq? associativity 'right)
-		  new-action)
+		  (cons new-action (cdr cur-actions)))
 		 (else ; non-associative
-		  #f))))))
+		  '()))))))
+
+(define (state->symbol state-num)
+  (string->symbol (string-append "s" (number->string state-num))))
+
+(define (rule->symbol rule-num)
+  (string->symbol (string-append "r" (number->string (- rule-num)))))
 
 ;;;-----------------------------------------------------------------------------
 ;;; This is the function that is called after all the major computation has been
 ;;; done.  It converts everything into a LR-PROGRAM record and then returns it.
-(define (construct-LR-program lalr-record)
+(define (construct-PDA lalr-record)
   (let* ((symbols (lalr-constructor:symbols lalr-record))
 	 (num-symbols (vector-length symbols))
 	 (num-nonterminals (lalr-constructor:num-nonterminals lalr-record))
@@ -1548,35 +1593,36 @@
 	 (rule-rhs (lalr-constructor:rule-rhs lalr-record))
 	 (rule-items (lalr-constructor:rule-items lalr-record))
 	 (rule-actions (lalr-constructor:rule-actions lalr-record))
+	 (error-symbol (lalr-constructor:error-symbol lalr-record))
+	 (no-shift (lalr-constructor:no-shift lalr-record))
+	 (comments (lalr-constructor:comments lalr-record))
 
-	 (error (lalr-constructor:error-symbol lalr-record))
-	 (terminals (let loop ((i (- num-symbols (if error 2 1))) (list '()))
-		      (if (> i num-nonterminals)
-			  (loop (- i 1) (cons (vector-ref symbols i) list))
-			  list)))
-	 (eoi (vector-ref symbols num-nonterminals))
-	 (rules (make-vector (- (vector-length rule-rhs) 1)))
-	 (states (lalr-constructor:action-table lalr-record)))
+	 (tokens (let loop ((i (- num-symbols 1)) (result '()))
+		   (if (< i num-nonterminals)
+		       result
+		       (let ((symbol (vector-ref symbols i)))
+			 (if (eq? symbol error-symbol)
+			     (loop (- i 1) result)
+			     (loop (- i 1) (cons symbol result)))))))
+	 (rules (make-vector (vector-length rule-rhs)))
+	 (state-table (lalr-constructor:state-table lalr-record)))
 
-    (let rule-loop ((top-item (- (vector-length rule-items) 2)))
-      (if (> top-item 0)
-	  (let* ((rule-num (- (vector-ref rule-items top-item)))
-		 (bottom-item (vector-ref rule-rhs rule-num))
-		 (rule-length (- top-item bottom-item))
-		 (right-side (make-vector rule-length)))
-	    (let item-loop ((i 0))
-	      (if (< i rule-length)
-		  (begin
-		    (vector-set! right-side i
-				 (vector-ref symbols
-					     (vector-ref rule-items
-							 (+ i bottom-item))))
-		    (item-loop (+ i 1)))))
-	    (vector-set! rules (- rule-num 1)
-			 (make-LR-rule (vector-ref symbols
-						   (vector-ref rule-lhs
-							       rule-num))
-				       right-side
-				       (vector-ref rule-actions rule-num)))
-	    (rule-loop (- bottom-item 1)))))
-    (make-LR-program terminals eoi error rules states)))
+    (let rule-loop ((rule-num 1))
+      (if (< rule-num (vector-length rules))
+	  (let item-loop ((item (vector-ref rule-rhs rule-num)) (count 0))
+	    (if (< (vector-ref rule-items item) 0)
+		(begin
+		  (vector-set! rules rule-num
+			       (list 'RULE (rule->symbol (- rule-num))
+				     (vector-ref symbols (vector-ref rule-lhs
+								     rule-num))
+				     count (vector-ref rule-actions rule-num)))
+		  (rule-loop (+ rule-num 1)))
+		(item-loop (+ item 1) (+ count 1))))))
+
+    (append (map (lambda (x) (cons 'COMMENT x)) comments)
+	    (list (cons 'TOKENS tokens))
+	    (if error-symbol (list (list 'ERROR error-symbol)) '())
+	    (if (null? no-shift) '() (list (cons 'NO-SHIFT no-shift)))
+	    (cdr (vector->list rules))
+	    (vector->list state-table))))
