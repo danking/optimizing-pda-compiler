@@ -818,11 +818,6 @@
 	    (vector-set! derives non-term
 			 (cons rule-num (vector-ref derives non-term)))
 	    (loop (+ rule-num 1)))))
-    (let loop ((i 0)) ;<------- Is the reverse loop necessary -------------- ???
-      (if (< i (vector-length derives))
-	  (begin
-	    (vector-set! derives i (reverse (vector-ref derives i)))
-	    (loop (+ i 1)))))
     (set-lalr-constructor:derives lalr-record derives)))
 
 ;-------------------------------------------------------------------------------
@@ -1002,40 +997,42 @@
 (define (compute-LR0-states lalr-record)
   (let* ((num-symbols (vector-length (lalr-constructor:symbols lalr-record)))
 	 (rule-items (lalr-constructor:rule-items lalr-record))
-	 (state-queue (make-vector (vector-length rule-items))) ;<---- This needs to be variable length --- !!!
-	 (item-map ((make-table-maker equal? (lambda (lst) (fold + 0 lst))))))
-    (vector-set! state-queue 0 (make-state 0 #f '(0)))
-    (table-set! item-map '(0) (vector-ref state-queue 0))
+	 (item-map ((make-table-maker equal? (lambda (lst) (fold + 0 lst)))))
+	 (start-state (make-state 0 #f '(0))))
+    (table-set! item-map '(0) start-state)
 
-    (let state-loop ((cur-state 0) (last-state 1))
-      (if (< cur-state last-state)
-	  (let* ((state (vector-ref state-queue cur-state))
+    (let state-loop ((state-stack (list start-state))
+		     (state-list (list start-state)))
+      (if (pair? state-stack)
+	  (let* ((state (car state-stack))
 		 (items (compute-closure state lalr-record))
 		 (next-states (compute-goto items num-symbols rule-items)))
 	    (save-reductions state items rule-items)
-	    (let next-loop ((symbol (- num-symbols 1))
-			    (last-state last-state)
-			    (shifts '()))
-	      (if (>= symbol 0) ;<-------- Can we go the other direction --- ???
+	    (let next-loop ((symbol 0) (shifts '()) (state-list state-list)
+			    (state-stack (cdr state-stack)))
+	      (if (< symbol num-symbols)
 		  (let ((next-items (vector-ref next-states symbol)))
 		    (cond ((null? next-items)
-			   (next-loop (- symbol 1) last-state shifts))
+			   (next-loop (+ symbol 1) shifts
+				      state-list state-stack))
 			  ((table-ref item-map next-items) =>
 			   (lambda (state)
-			     (next-loop (- symbol 1) last-state
-					(cons state shifts))))
+			     (next-loop (+ symbol 1) (cons state shifts)
+					state-list state-stack)))
 			  (else
-			   (let ((new-state (make-state last-state symbol
-							next-items)))
-			     (vector-set! state-queue last-state new-state)
+			   (let ((new-state
+				  (make-state (+ (state:number (car state-list))
+						 1)
+					      symbol next-items)))
 			     (table-set! item-map next-items new-state)
-			     (next-loop (- symbol 1) (+ last-state 1)
-					(cons new-state shifts))))))
+			     (next-loop (+ symbol 1) (cons new-state shifts)
+					(cons new-state state-list)
+					(cons new-state state-stack))))))
 		  (begin
 		    (set-state:shifts state (reverse shifts))
-		    (state-loop (+ cur-state 1) last-state)))))
+		    (state-loop state-stack state-list)))))
 	  (set-lalr-constructor:states lalr-record
-				       (vector-copy state-queue last-state))))))
+				       (list->vector (reverse state-list)))))))
 
 ; This function takes a list of "kernel" items from 'state and returns the
 ; complete list of items that represent that state.  The new items will all have
@@ -1260,7 +1257,7 @@
 				       (set-bit (vector-ref DR goto-num)
 						(- symbol num-nonterminals)))
 			  (shift-loop (cdr shift-states) gotos))))
-		  (vector-set! reads goto-num (reverse gotos)))) ;< --- Is this necessary --- ???
+		  (vector-set! reads goto-num gotos)))
 	    (goto-loop (+ goto-num 1)))))
     (set-lalr-constructor:follow lalr-record DR)
     (set-lalr-constructor:reads lalr-record reads)))
@@ -1340,11 +1337,6 @@
 		(let ((inner-goto-num (car inner-gotos)))
 		  (vector-set! includes inner-goto-num (cons outer-goto-num (vector-ref includes inner-goto-num)))
 		  (inner-loop (cdr inner-gotos)))))))
-    (let loop ((i 0)) ;< -------------------------- Is this necessary --- ???
-      (if (< i num-gotos)
-	  (begin
-	    (vector-set! includes i (reverse (vector-ref includes i)))
-	    (loop (+ i 1)))))
     includes))
 
 ;-------------------------------------------------------------------------------
@@ -1474,7 +1466,8 @@
 			      (bitset (vector-ref LA LA-num)))
 			  (let term-loop ((term-num num-nonterminals)
 					  (bitset bitset))
-			    (if (not (= bitset 0))
+			    (if (= bitset 0)
+				(reduction-loop (+ LA-num 1))
 				(begin
 				  (if (= (modulo bitset 2) 1)
 				      (vector-set! workspace term-num
@@ -1561,7 +1554,7 @@
 		    ((vector-ref workspace symbol-num) =>
 		     (lambda (action)
 		       (let* ((sym (vector-ref symbols symbol-num))
-			      (action
+			      (out-action
 			       (cond ((< action 0)
 				      (list sym 'reduce (- (+ action 1))))
 				     ((= symbol-num num-nonterminals)
@@ -1569,7 +1562,7 @@
 				     (else
 				      (list sym 'shift action)))))
 			 (action-loop (+ symbol-num 1)
-				      (cons action actions)))))
+				      (cons out-action actions)))))
 		    (else
 		     (action-loop (+ symbol-num 1) actions))))
 
@@ -1660,12 +1653,12 @@
 	 (rule-items (lalr-constructor:rule-items lalr-record))
 	 (rule-actions (lalr-constructor:rule-actions lalr-record))
 
-	 (terminals (let loop ((i (- num-symbols 1)) (list '()))
+	 (error (lalr-constructor:error-symbol lalr-record))
+	 (terminals (let loop ((i (- num-symbols (if error 2 1))) (list '()))
 		      (if (> i num-nonterminals)
 			  (loop (- i 1) (cons (vector-ref symbols i) list))
 			  list)))
 	 (eoi (vector-ref symbols num-nonterminals))
-	 (error (lalr-constructor:error-symbol lalr-record))
 	 (rules (make-vector (- (vector-length rule-rhs) 1)))
 	 (states (lalr-constructor:action-table lalr-record)))
 

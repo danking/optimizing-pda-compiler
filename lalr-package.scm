@@ -41,8 +41,10 @@
 	  null-action-evaluator scheme-action-evaluator
 	  compile-actions
 	  ; examples.scm
-	  tiger-grammar)
+	  tiger-grammar
+	  ; debug.scm
+	  border-string old->new)
 
   (open list-lib string-lib tables scheme-with-scsh defrec-package)
 
-  (files cfg lalr utilities semantic-action engine examples))
+  (files cfg lalr utilities semantic-action engine examples debug))
