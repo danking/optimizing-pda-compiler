@@ -177,6 +177,14 @@
 ;; - Macro pour les structures de donnees
 
 ;; ILYA: Macro's that do stuff
+
+; This "record" represents a state in the parser.  It contains 4 fields:
+; - number = A unique number assigned to each record.
+; - acc-sym = The symbol that was shifted to cause a tranfer to this state. <--- ???
+; - nitems = (length items)
+; - items = The list of items in this state.  Each item is represented by an
+;           index into 'ritems.  The "dot" is considered to be before the each
+;           index in its corresponding rule.
 (def-macro (new-core)              (make-vector 4 0))
 (def-macro (set-core-number! c n)  (vector-set! c 0 n))
 (def-macro (set-core-acc-sym! c s) (vector-set! c 1 s))
@@ -187,6 +195,15 @@
 (def-macro (core-nitems c)         (vector-ref c 2))
 (def-macro (core-items c)          (vector-ref c 3))
 
+; This "record" represents the shifts that can take place in the paser.  It has
+; 3 fields:
+; - number = This is the same number as the "number" field in its corresponding
+;            "core" record.
+; - nshifts = (length shifts)
+; - shifts = A list of "core numbers" representing states that can be reached
+;            from "this" state by shifting some symbol.  These will be ordered
+;            in descending order according to the corresponding "core" record's
+;            "acc-sym" (i.e. non-terminal shifts, "goto"s, will come last).
 (def-macro (new-shift)              (make-vector 3 0))
 (def-macro (set-shift-number! c x)  (vector-set! c 0 x))
 (def-macro (set-shift-nshifts! c x) (vector-set! c 1 x))
@@ -195,6 +212,12 @@
 (def-macro (shift-nshifts s)        (vector-ref s 1))
 (def-macro (shift-shifts s)         (vector-ref s 2))
 
+; This "record" represents the reductions that can take place in a given state
+; in the LR(0) parser.  It contains 3 fields:
+; - number = This is the same number as its "number" field in its corresponding
+;            "core".
+; - nreds = (length rules)
+; - rules = A list of rules (indexes into 'rrhs & 'rlhs) that can be reduced
 (def-macro (new-red)                (make-vector 3 0))
 (def-macro (set-red-number! c x)    (vector-set! c 0 x))
 (def-macro (set-red-nreds! c x)     (vector-set! c 1 x))
@@ -263,55 +286,121 @@
 	                 ;; set-fderives, build-relations
 
 ; This is similar to 'derives except that the lists in this vector contain all
-; possible rules that can be derived from the corresponding terminal no matter
+; possible rules that can be derived from the corresponding non-terminal no matter
 ; how many intermediate derivations are in-between.  For example, the start
-; symbol's list will contain every rule.  See 'set-fderives for more info.
+; symbol's list will contain every rule.  See 'set-fderives for more info. <-- ???
 (define fderives     #f) ;; initialize-all, set-fderives, closure
 
-; This is a vector of size  'nvars with each element corresponding to an element
+; This is a vector of size 'nvars with each element corresponding to an element
 ; in 'the-nonterminals.  The values are sets of non-terminals where each
 ; non-terminal in the set is capable of appearing at the begining of a
-; derivation from the non-terminal in question.
+; derivation from the non-terminal in question. <--------------------------- ???
 (define firsts       #f) ;; initialize-all, set-firsts, set-fderives
 
-; This is a vector of size 'nsyms. <--------------------------------------- ???
+; This is a vector of size 'nsyms.  It is used in constructing the LR(0) parser.
+; If a shift is possible from the current state by some symbol, then the element
+; in this vector corresponding to that symbol will contain the list of "kernel"
+; items that are in the next state.  If a shift by a symbol is undefined in the
+; current state, then so is the value in this vector (i.e. it could be
+; anything).  This list of symbols which are defined is stored in 'shift-symbol.
 (define kernel-base  #f) ;; initialize-all, allocate-item-sets, new-itemsets, 
                          ;; get-state, new-state
 
-; This is a vector of size 'nsyms. <---------------------------------------- ???
+; This vector corresponds to 'kernel-base.  For elements of 'kernel-base which
+; are defined, the corresponding element of this vector will point to the last
+; element of the list in 'kernel-base.
 (define kernel-end   #f) ;; initialize-all, allocate-item-sets, new-itemsets
+
+; This is a list of symbols that is used while constructing the LR(0) parser.
+; The symbols in this list are valid terminals and non-terminals to look for in
+; the current state.  The state to shift into when the given symbol is seen is
+; found by consulting 'kernel-base.
 (define shift-symbol #f) ;; initialize-all, new-itemsets, append-states
+
+; This is a list of "core" records that is used while constructing the LR(0)
+; parser.  These core records represent the states that can be gotten to from
+; the current state by shifting some symbol.
 (define shift-set    #f) ;; initialize-all, append-states, save-shifts
 
-; This is a vector of size 'nrules + 1 <------------------------------------ ???
-(define red-set      #f) ;; initialize-all, allocate-storage
+; A vector of size 'STATE-TABLE-SIZE.  This functions as a hash-table to lookup
+; a "core" record given a list of items.  The hashing function is the sumation
+; of the list (This assumes that the list consits of indexes into the 'ritems
+; vector).
 (define state-table  #f) ;; initialize-all, get-state
+
+; This is a vector of size 'nstates.  It maps a "core-number" to the
+; "core-acc" (or accessing symbol) for each core.
 (define acces-symbol #f) ;; initialize-all, set-accessing-symbol, 
                          ;; initialize-LA, set-goto-map, initialize-F, 
                          ;; build-relations
 
+; This is a vector of size 'nstates.  It maps a given "red number" to the "red"
+; record for that number.  If there is no "red" record for a particular state,
+; then the value #f is mapped instead.
 (define reduction-table #f) ;; initialize-all, set-reduction-table, 
                             ;; initialize-LA, build-tables, 
                             ;; compact-action-table
+
+; This is just like 'reduction-table except it deals with "shift" records.
 (define shift-table  #f) ;; initialize-all, set-shift-table, initialize-LA, 
                          ;; initialize-F, build-relations, build-tables
+
+; This is a vector of size 'nstates.  It maps a given state number to either #t
+; or #f.  A state is considered inconsistent if a reduction by more than one
+; rule my occur in the state or if a there is a reduction and no no non-terminal
+; shifts (gotos).
 (define consistent   #f) ;; initialize-all, initialize-LA, build-relations, 
 	                 ;; build-tables
+
+; This is a vector of size 'nstates + 1.  It maps a given state number to a
+; non-negative integer.  This integer is the sum of the number of reductions
+; that take place in all the inconsistent states (see 'consistent) numbered less
+; than the one in question.  Thus, the first element is always 0.  The last
+; element, which does not correspond to a state, contains the sum for the whole
+; grammar.
 (define lookaheads   #f) ;; initialize-all, initialize-LA, add-lookahead-edge, 
                          ;; compute-lookaheads, build-tables
+
+; This is a vector the is the same length as the value of the last element of
+; 'lookaheads (but at least 1).  Each element is a bit-set.
 (define LA           #f) ;; initialize-all, initialize-LA, compute-lookaheads, 
 	                 ;; build-tables
+
+; This is a vector that is the same size as 'LA.  In contains, in order, the
+; rule numbers (indexes in 'rlhs & 'rrhs) of the rules involved in the
+; reductions in inconsistent (see 'consistent) states.
 (define LAruleno     #f) ;; initialize-all, initialize-LA. add-lookahead-edge, 
 	                 ;; build-tables
+
+; This is a vector that is the same size as 'LA.
 (define lookback     #f) ;; initialize-all, initialize-LA, add-lookback-edge, 
 	                 ;; compute-lookaheads, 
 
+; This is a vector of size 'nvars + 1.  Each element corresponds to a
+; non-terminal and the value is the sum of the number of shifts that each
+; non-terminal before it was involved in.  The last element is the total
+; number of non-terminal shifts in the LR(0) parser (the same value as in
+; 'ngotos).
+;
+; I believe that these numbers function as starting indexes for looking into
+; 'from-state & 'to-state when analyzing goto transisions.
 (define goto-map     #f) ;; initialize-all, set-goto-map, map-goto
+
+; This is a vector of size 'ngotos.  Each element corresponds to a particular
+; "goto" transision.  The elements are state numbers.  This vector gives the
+; starting state for the corresponding "goto" transision.
 (define from-state   #f) ;; initialize-all, set-goto-map, map-goto, 
                          ;; build-relations
+
+; This vector is just like 'from-state except that it gives the destination
+; state.
 (define to-state     #f) ;; initialize-all, set-goto-map, initialize-F, 
                          ;; build-relations
-(define includes     #f) ;; initialize-all, build-relations, digraph, 
+
+; This is a vector of size 'ngotos.
+(define includes     #f) ;; initialize-all, build-relations, digraph,
+
+; This is a vector of size 'ngotos.  Each element is a bit-set.
 (define F            #f) ;; initialize-all, initialize-F, compute-lookaheads, 
                          ;; traverse
 (define action-table #f) ;; initialize-all, build-tables,
@@ -323,18 +412,18 @@
 (define nvars           #f) ;The number of non-terminal symbols
 (define nterms          #f) ;The number of terminal symbols
 (define nsyms           #f) ;'nterms + 'nvars
-(define nstates         #f)
-(define first-state     #f)
-(define last-state      #f)
-(define final-state     #f)
-(define first-shift     #f)
-(define last-shift      #f)
-(define first-reduction #f)
-(define last-reduction  #f)
-(define nshifts         #f)
-(define maxrhs          #f)
-(define ngotos          #f)
-(define token-set-size  #f)
+(define nstates         #f) ;The number of states in the parser.  This next (unique) "core" number is the current value of this number.
+(define first-state     #f) ;A list of "core"s that represent the states in the LR(0) parser.
+(define last-state      #f) ;A reference to the last element of 'first-state
+(define final-state     #f) ;The number of the "core" that is the acceptance state
+(define first-shift     #f) ;The list of "shift" records.
+(define last-shift      #f) ;A reference to the last element of the "shift" list.
+(define first-reduction #f) ;A list of "red"s that represent reductions in the LR(0) parser.
+(define last-reduction  #f) ;A reference to the last element of 'last-reduction
+(define nshifts         #f) ;A variable that is used in constructing the LR(0) parser.  It represents the number of shifts possible in the current state.
+(define maxrhs          #f) ;This is the number of symbols on the ride-hand-side of the longest rule in the grammar.
+(define ngotos          #f) ;The total number of "goto" transisions in the grammar.
+(define token-set-size  #f) ;Set to (+ 1 (quotient nterms (BITS-PER-WORD)))
 (define grammar #f)
 (define global-terms #f) ;The list of terminal symbols
 
@@ -359,7 +448,6 @@
   (set! kernel-end   #f)
   (set! shift-symbol #f)
   (set! shift-set    #f)
-  (set! red-set      #f)
   (set! state-table  (make-vector STATE-TABLE-SIZE '()))
   (set! acces-symbol #f)
   (set! reduction-table #f)
@@ -480,6 +568,8 @@
 		     (cons (car it) ass) 
 		     (cons (car it) prec))) )
 
+; This functions takes a grammar in the user format and does some
+; transformations on it before calling 'do-things.
 (define (rewrite-grammar grammar)
   (let ( (terms (if (not (pair? grammar))
 		    (error "Grammar definition must be a non-empty list")
@@ -773,9 +863,6 @@
 	  (vector-set! firsts i (sinsert i (vector-ref firsts i)))
 	  (loop (+ i 1))))))
 
-
-
-
 ; Fonction set-fderives qui calcule un tableau de taille
 ; nvars et qui donne, pour chaque non-terminal, une liste des regles pouvant
 ; etre derivees a partir de ce non-terminal. (se sert de firsts)
@@ -802,10 +889,17 @@
 	  (vector-set! fderives i x)
 	  (loop (+ i 1))))))
 
-
 ; Fonction calculant la fermeture d'un ensemble d'items LR0
 ; ou core est une liste d'items
 
+;
+; Arguments:
+; - core = The result of calling 'core-items on a core.  This is a list of
+;          "kernel" items (see the Dragon Book) that compose an individual state
+;          in the parser.
+; Returns (I think)
+;   A complete list of items that are in this state.  Items are represented by
+; indexes into 'ritem.  The dot is considered to be before the index given.
 (define (closure core)
   ;; Initialization
   (let ( (ruleset (make-vector nrules #f)) )
@@ -819,14 +913,14 @@
 			(vector-set! ruleset (car dsp) #t)
 			(loop2 (cdr dsp))))))
 	    (loop (cdr csp)))))
-    
+
     (let loop ((ruleno 1) (csp core) (itemsetv '())) ; ruleno = 0
       (if (< ruleno nrules)
 	  (if (vector-ref ruleset ruleno)
 	      (let ((itemno (vector-ref rrhs ruleno)))
 		(let loop2 ((c csp) (itemsetv2 itemsetv))
 		  (if (and (pair? c)
-			   (< (car c) itemno))
+			   (< (car c) itemno)) ;<--------------------------- ???
 		      (loop2 (cdr c) (cons (car c) itemsetv2))
 		      (loop (+ ruleno 1) c (cons itemno itemsetv2)))))
 	      (loop (+ ruleno 1) csp itemsetv))
@@ -838,8 +932,7 @@
 ; This function is called by 'generate-states.
 (define (allocate-storage)
   (set! kernel-base (make-vector nsyms 0))
-  (set! kernel-end  (make-vector nsyms #f))
-  (set! red-set (make-vector (+ nrules 1) 0)))
+  (set! kernel-end  (make-vector nsyms #f)))
 
 ; This function is called by 'generate-states to do some initial setup.
 (define (initialize-states)
@@ -853,8 +946,7 @@
     (set! last-state first-state)
     (set! nstates 1)))
 
-
-
+; This function constructs the LR(0) parser.
 (define (generate-states)
   (allocate-storage)
   (set-fderives)
@@ -863,7 +955,7 @@
     (if (pair? this-state)
 	(let* ((x (car this-state))
 	       (is (closure (core-items x))))
-	
+
 	  (save-reductions x is)
 	  (new-itemsets is)
 	  (append-states)
@@ -871,12 +963,25 @@
 	      (save-shifts x))
 	  (loop (cdr this-state))))))
 
-;; Fonction calculant les symboles sur lesquels il faut "shifter" 
-;; et regroupe les items en fonction de ces symboles
+; This function is roughly the "goto" operation from the Dragon Book's
+; description of how to construct an LR(0) parser.  It takes a list of items as
+; input and generates new states based on those items.
 ;
-; Google Translation:
-; Function calculating the symbols on which one needs "shifter"
-; and gathers the items according to these symbols
+; Arguments
+; - itemset = The list of items that represent a given state in the LR(0)
+;             parser.  The elements are indexes into 'ritem with the "dot"
+;             occuring right before the index in question.
+; Returns:
+; Nothing directly.  It has the following side-effects:
+; - Sets 'shift-symbol to be the list of symbols that will cause a shift in the
+;   given state.
+; - Sets 'nshifts to be (length shift-symbol)
+; - Modifies 'kernel-base so that the indexes corresponding to the elements of
+;   'shift-symbol contain lists of indexes into 'ritem.  These lists represent
+;   the "kernel" (see the Dragon Book) items of the state gotten to be shifting
+;   the given symbol in this state.  The elements of 'kernel-base that do not
+;   correspond to items in 'shift-symbol are modified.
+; - Modifies 'kernel-end to continue its relationship with 'kernel-base.
 (define (new-itemsets itemset)
   ;; - Initialization
   (set! shift-symbol '())
@@ -905,8 +1010,15 @@
 
   (set! nshifts (length shift-symbol)))
 
-
-
+; This function takes a list of items and returns the number of the
+; corresponding "core".  If the "core" that corresponds to the list does not
+; exist, then it is created.
+;
+; Arguments:
+; - sym = An index into 'kernel-base.  (vector-ref kernel-base sym) is the list
+;         of items.
+; Returns:
+;   The "core number" corresponding to the given state.
 (define (get-state sym)
   (let* ((isp  (vector-ref kernel-base sym))
 	 (n    (length isp))
@@ -934,7 +1046,14 @@
 		    (core-number x))
 		  (loop (cdr sp1))))))))
 
-
+; This function creates a new "core" symbol (and thus a new state) to represent
+; the given list of items.
+;
+; Arguments:
+; - sym = An index into 'kernel-base.  The list of items is taken from there.
+; Returns:
+;   The new "core" record.  It also modifies the values of 'last-state (and thus
+; 'first-state), 'nstates, and possibly 'final-state.
 (define (new-state sym)
   (let* ((isp  (vector-ref kernel-base sym))
 	 (n    (length isp))
@@ -949,9 +1068,9 @@
     (set! nstates (+ nstates 1))
     p))
 
-
-;; --
-
+; Uses the list in 'shift-symbol to construct a list in 'shift-set that contains
+; the new "core" records (and thus states) that were represented by
+; 'shift-symbol.
 (define (append-states)
   (set! shift-set
 	(let loop ((l (reverse shift-symbol)))
@@ -959,21 +1078,33 @@
 	      '()
 	      (cons (get-state (car l)) (loop (cdr l)))))))
 
-;; --
-
+; This function takes a "core" record as an argument and creates a new "shift"
+; record for it.  This function uses the values of 'nshifts and 'shift-set and
+; it assumes that 'nshifts is greater than zero.  It adds the newly created
+; "shift" record to the shift list ('first-shift & 'last-shift).
 (define (save-shifts core)
   (let ((p (new-shift)))
 	(set-shift-number! p (core-number core))
 	(set-shift-nshifts! p nshifts)
 	(set-shift-shifts! p shift-set)
 	(if last-shift
-	(begin
-	  (set-cdr! last-shift (list p))
-	  (set! last-shift (cdr last-shift)))
-	(begin
-	  (set! first-shift (list p))
-	  (set! last-shift first-shift)))))
+	    (begin
+	      (set-cdr! last-shift (list p))
+	      (set! last-shift (cdr last-shift)))
+	    (begin
+	      (set! first-shift (list p))
+	      (set! last-shift first-shift)))))
 
+; This function takes a state and create a new "red" record for it if needed.
+;
+; Arguments
+; - core = The "core" record for the state in question.
+; - itemset = The (complete) list of items in the state in question.  This is
+;             needed because some "nonkernel items" (see the Dragon Book) might
+;             make reductions on the empty string possible.
+; Returns:
+; Nothing - It adds the new record to the the reduction-list ('first-reduction &
+; 'last-reduction).
 (define (save-reductions core itemset)
   (let ((rs (let loop ((l itemset))
 	      (if (null? l)
@@ -998,6 +1129,8 @@
 
 ;; --
 
+; This function computes the LALR Look-Ahead Sets as described in the DeRemer
+; and Pennello paper.
 (define (lalr)
   (set! token-set-size (+ 1 (quotient nterms (BITS-PER-WORD))))
   (set-accessing-symbol)
@@ -1011,6 +1144,7 @@
   (digraph includes)
   (compute-lookaheads))
 
+; This function computes the value of 'acces-symbol
 (define (set-accessing-symbol)
   (set! acces-symbol (make-vector nstates #f))
   (let loop ((l first-state))
@@ -1019,6 +1153,7 @@
 	  (vector-set! acces-symbol (core-number x) (core-acc-sym x))
 	  (loop (cdr l))))))
 
+; This function computes the value of 'shift-table.
 (define (set-shift-table)
   (set! shift-table (make-vector nstates #f))
   (let loop ((l first-shift))
@@ -1027,6 +1162,7 @@
 	  (vector-set! shift-table (shift-number x) x)
 	  (loop (cdr l))))))
 
+; This function computes the value of 'reduction-table.
 (define (set-reduction-table)
   (set! reduction-table (make-vector nstates #f))
   (let loop ((l first-reduction))
@@ -1035,6 +1171,7 @@
 	  (vector-set! reduction-table (red-number x) x)
 	  (loop (cdr l))))))
 
+; This function computes the value of 'maxrhs.
 (define (set-max-rhs)
   (let loop ((p 0) (curmax 0) (length 0))
     (let ((x (vector-ref ritem p)))
@@ -1044,6 +1181,8 @@
 	      (loop (+ p 1) (max curmax length) 0))
 	  (set! maxrhs curmax)))))
 
+; This function computes the values of 'consistent, 'lookaheads, and 'LAruleno.
+; It also allocates the initial values of 'LA and 'lookback.
 (define (initialize-LA)
   (set! consistent (make-vector nstates #f))
   (set! lookaheads (make-vector (+ nstates 1) #f))
@@ -1087,7 +1226,7 @@
 				  (loop2 (cdr j) (+ np2 1)))))
 			  (loop (+ i 1) np))))))))))
 
-
+; This function constructs the value of 'goto-map, 'from-state, and 'to-state.
 (define (set-goto-map)
   (set! goto-map (make-vector (+ nvars 1) 0))
   (let ((temp-map (make-vector (+ nvars 1) 0)))
@@ -1153,7 +1292,10 @@
 	   (else
 	    (loop low (- middle 1))))))))
 
-
+; This function implements parts B - D of the algorithm under section 6 of the
+; DeRemer and Pennello paper.
+;
+; As a side effect, it computes the value of 'F.
 (define (initialize-F)
   (set! F (make-vector ngotos #f))
   (do ((i 0 (+ i 1))) ((= i ngotos)) (vector-set! F i (new-set token-set-size)))
@@ -1182,6 +1324,7 @@
 	      (loop (+ i 1) (+ rowp 1)))))
     (digraph reads)))
 
+; Helper function for 'build-relations.
 (define (add-lookback-edge stateno ruleno gotono)
   (let ((k (vector-ref lookaheads (+ stateno 1))))
     (let loop ((found #f) (i (vector-ref lookaheads stateno)))
@@ -1196,7 +1339,7 @@
 	      (vector-set! lookback i
 			   (cons gotono (vector-ref lookback i))))))))
 
-
+; Helper function for 'build-relations.
 (define (transpose r-arg n)
   (let ((new-end (make-vector n #f))
 	(new-R  (make-vector n #f)))
@@ -1223,7 +1366,9 @@
     new-R))
 
 
-
+; This function does part E.
+;
+; It computes the value of 'includes and 'lookback.
 (define (build-relations)
   (let ( (get-state (lambda (stateno symbol)
 		      (let loop ((j (shift-shifts (vector-ref shift-table stateno)))
@@ -1284,6 +1429,7 @@
 		  (loop2 (cdr sp)))
 		(loop (+ i 1))))))) )
 
+; This is a helper function for 'digraph.
 (define (traverse i INDEX R VERTICES top)
   (let ( (infinity (+ ngotos 2)) )	  
     (set! top (+ 1 top))
@@ -1316,6 +1462,7 @@
 				   token-set-size)
 			(loop)))))))))) 
 
+; This is the Digraph function from section 4 of the DeRemer and Pennello paper.
 (define (digraph relation)
   (let ( (INDEX (make-vector (+ ngotos 1) 0))
 	  (R relation) 
