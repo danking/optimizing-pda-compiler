@@ -1,0 +1,377 @@
+Abstract
+
+Scheme's macros are powerful tools that are easily capable of doing language
+transformations within the compiler.  We use the ability to break down a parser
+generator into its component languages.  As a result, we have a tool that is
+much more modular and extensible but no less user-friendly than the monolithic
+versions.
+
+Introduction
+
+Parser generators are standard tools that have been around for many years.  The
+most famous of these tools are YACC [4] and its GNU equivalent, Bison [3].
+Parser generators for Scheme are not new either [1][5][7].  However, all of
+these tools suffer from the problem of being monolithic.  That is, they all have
+many different parts and package many different design decisions in a single
+tool.  Among these are:
+
+- The parser-generator technology to use.  This is usually LALR(1) although
+  Essense [7] gives the user a choice between SLR(k) and full LR(k).
+- The language to target.  The lack of a general parser-generator has led to the
+  phenomenon of every language having its own implementation(s).
+- The type of PDA implementation.  Should the PDA be interpreted or compiled
+  directly into the target language?  Are any optimizations made?
+- The interface to the semantic actions.  Most tools follow YACC's example [4]
+  and use "$1", "$2", ... "$n" to represent the values of tokens although
+  some [5] have taken a different approach.
+- The interface to the lexical analyzer.  Most implementations have a fixed
+  interface to the lexical analyzer.  This means that the lexer has to be
+  replaced if a different parser tool is chosen.
+
+These design decisions may be OK for most people but not everyone.
+Unfortunately, the size of these tools precludes users from writing their own
+versions.  In many cases, the user only needs to change one aspect of the tool.
+However, none of these tools offer a good way to do this and users are stuck
+with either using what they have or nothing at all.
+
+Taking Apart the Problem
+
+An extremely elegant solution becomes visible when the problem is viewed in a
+larger context.  The parser-generator defines its own "little language" to
+handle a task it does very well.  However, it is rarely the only language used
+to solve a problem.  There is usually another "little language" called the
+"lexical analyzer" that comes before it and a more powerful, general-purpose
+language usually comes after it and glues the components together.  There is
+very little reason why we cannot take this further and break the parser down
+into other languages.
+
+The parser-generator is essentially a compiler.  It translates a Context-Free
+Grammar (CFG) into a Push-Down Automaton (PDA).  The PDA acts as an intermediate
+between the lexer (input) language and the semantic actions.  The semantic
+actions are another language which is embedded in the CFG but passes through the
+parser-generator either mostly or completely unmodified.  The semantic actions,
+in their turn, translate the lexer's language into the output language.
+
+All told, there are five different languages involved:
+1) The lexer (input) language
+2) The CFG language
+3) The PDA language
+4) The Semantic Action language
+5) The output language (usually the same as #5)
+
+Now the problem becomes one of how compose all these languages.  Shivers, in his
+paper on "little languages" [6], has a ready solution.  He shows how the
+Scheme's macro system can be used to create entirely new languages that can be
+embedded directly in Scheme.  Furthermore, users can escape out of these macros
+back into Scheme.  This allows users to embed Scheme code or still other "little
+languages" inside the new language.  In the case of a parser-generator where
+languages are embedded between, inside of, and on top of other languages, this
+is a powerful tool.
+
+With this in mind, we defined a CFG and PDA language and implemented macros to
+handle the common cases.  In addition to this, our PDA compiler has a very
+general notion of a token stream.  It can handle many different ways of
+expressing tokens.  This is opposed to the normal interface to the lexical
+analyzer which demands that the lexer's language be restricted to a very strict
+alphabet.
+
+The CFG Language
+
+Grammar
+
+cfg        ::= (cfg-clause ...)
+cfg-clause ::= (COMMENT whatever ...)
+             | (TOKENS token-decl ...)
+             | (NO-SHIFT ident ...)
+             | (END-OF-PARSE ident ...)
+             | (NON-TERM ident nt-clause ...)
+token-decl ::= ident
+             | (NON ident ...)
+             | (RIGHT ident ...)
+             | (LEFT ident ...)
+             | (EOS ident)
+             | (ERROR ident)
+nt-clause  ::= (COMMENT whatever ...)
+             | (=> [ident] (ident ...) action)
+action     ::= whatever
+
+Our CFG language is based on keyword-delimited lists and is not unlike the
+languages of other parser-generators.  COMMENTS are ignored.  TOKENS specifies
+the alphabet of terminal symbols and NON-TERM gives the definitions for all the
+non-terminals.  Precedence and associativity are specified using LEFT, RIGHT,
+and NON.  EOS names a token to use as "End Of Stream" and and ERROR names a
+token to use as the error symbol.
+
+Partial Parsing
+
+The only way in which our language departs significantly from that of YACC [4]
+is in the NO-SHIFT and END-OF-PARSE declarations.  These were taken from ML-Yacc
+[8] but they are worth mentioning.  Yacc makes the implicit assumption that it
+should continue parsing until it reaches the end of the file.  There are many
+cases where this is not what is needed.  Consider the built-in function READ.
+It returns one "thing" but that thing may be as simple as an integer or as
+complex as a deeply nested list.  The follow is an example grammar for an simple
+version of READ.
+
+((TOKENS SYMBOL NUMBER STRING L-PAREN R-PAREN
+         (EOS *EOF*)
+         (ERROR *ERROR*))
+ (END-OF-PARSE *EOF* SYMBOL NUMBER STRING L-PAREN)
+
+ (NON-TERM item
+           (=> (SYMBOL)                    SYMBOL)
+           (=> (NUMBER)                    NUMBER)
+           (=> (STRING)                    STRING)
+           (=> (L-PAREN item-list R-PAREN) (reverse item-list)))
+ (NON-TERM item-list
+           (=> ()                          '())
+           (=> (item-list item)            (cons item item-list))))
+
+END-OF-PARSE and NO-SHIFT are meant to abstract away the two components of the
+end-of-file token.  END-OF-PARSE means that the tokens so named can occur after
+the start symbol and are valid lookaheads to guard the ACCEPT action.  NO-SHIFT
+means that the tokens so named should not be read past once they are encountered
+on the input stream.  This obviously means that should not guard a shift action
+in the PDA but it also means that when the PDA is in error correction mode, it
+should not throw away and attempt to read past a NO-SHIFT token.  The EOS token
+is an END-OF-PARSE and a NO-SHIFT token by default if neither of those last two
+clauses appear in the grammar.  This allows us handle both the file-at-a-time
+and item-at-a-time cases easily.
+
+The Parser-Generator Macro
+
+From the user's perspective, translating from a CFG to a PDA is easy.  A simple
+macro called CFG->PDA is provided.  The code for this macro is a heavily adapted
+version of Boucher's parser [1] and implements the algorithm for constructing a
+LALR(1) parser described in [2].
+
+We went with this solution because LALR(1) is the most common choice.  It uses
+an algorithm that is very efficient and still handles most grammars.  However,
+the user is not restricted to LALR(1).  Our CFG language is not specific to any
+particular type of parser-generator and someone could easily write an SLR or a
+full LR(k) generator as a drop-in replacement for our solution.
+
+The PDA Language
+
+Grammar
+
+pda           ::= (pda-clause ...)
+pda-clause    ::= (COMMENT whatever ...)
+                | (TOKENS ident ...)
+                | (ERROR ident)
+                | (NO-SHIFT ident ...)
+                | state-clause
+                | rule-clause
+
+The PDA language, like the CFG language, consists of a series of
+keyword-delimited lists.  COMMENTs are ignored.  TOKENS is used to specify the
+alphabet of tokens.  ERROR denotes the error token.  NO-SHIFT means the same as
+in the CFG language.
+
+state-clause  ::= (STATE state-name action-clause ...)
+action-clause ::= (COMMENT whatever ...)
+                | (SHIFT (token ...) state-name)
+                | (REDUCE (token ...) rule-name)
+                | (ACCEPT (token ...))
+                | (GOTO non-term state-name)
+state-name    ::= ident
+rule-name     ::= ident
+token         ::= ident
+non-term      ::= ident
+
+Each state clause names a different state.  The first symbol after STATE is a
+symbol which is the name of the state.  SHIFT, REDUCE, and ACCEPT all define
+actions for the shift/reduce table.  The list of tokens are the lookaheads for
+the action.  These lists can be of any length but our parser-generator will only
+generate single element lists or empty lists.  An empty list denotes a default
+action--an action that takes place if no other action-clause matches.  If there
+is no default action and no action clause matches the input, then the action is
+assumed to be an error.
+
+The same thing extends to LR(k) grammars with k > 1.
+
+(STATE s22 (SHIFT  (ID ASSIGN) s23)
+           (REDUCE (ID)        r7))
+
+This state will shift when an ID followed by an ASSIGN appears on the input
+stream, REDUCE when ID is followed by anything else, and go into error recovery
+when ID is not the next thing on the input stream.
+
+GOTO is similar to the other actions except it switches based on a non-terminal.
+
+rule-clause   ::= (RULE rule-name non-term arity action)
+arity         ::= NUMBER
+                | (ident ...)
+
+When a reduction occurs, the PDA needs to know how many states to pop, what
+non-term to use for the following goto action, and what semantic action to run.
+Since it is quite common for a CFG rule to be used in more than one REDUCE
+action in the PDA, the rules are named by this clause and then referred to by
+name in the PDA.
+
+ARITY is syntactic sugar to allow a rule-clause to either look very similar to a
+CFG rule or only contain the information necessary.  The PDA needs to know the
+number of states to pop and if ARITY is a list, then that number is taken to be
+the length of the list.
+
+The Language as Documentation and Specification
+
+Many parser-generator tools will print out the generated PDA as a debugging
+tool.  Our parser-generator is unique in that it generates an executable
+specification.  This specification can also serve as a debugging tool.  Consider
+the following excerpt from a grammar that contains the dangling-else problem:
+
+(STATE s8
+        (COMMENT exp "=>" "." EXP)
+        (COMMENT smt "=>" IF exp THEN smt-list "." ELSE smt-list)
+        (COMMENT smt "=>" "." IF exp THEN smt-list ELSE smt-list)
+        (COMMENT smt "=>" IF exp THEN smt-list ".")
+        (COMMENT smt "=>" "." IF exp THEN smt-list)
+        (COMMENT smt "=>" "." exp)
+        (COMMENT smt-list "=>" smt-list "." smt)
+
+        (COMMENT (REDUCE (IF) r5))
+        (SHIFT (IF) s4)
+        (COMMENT (REDUCE (ELSE) r5))
+        (SHIFT (ELSE) s10)
+        (COMMENT (REDUCE (EXP) r5))
+        (SHIFT (EXP) s5)
+        (REDUCE (*EOF*) r5)
+
+        (GOTO smt s9)
+        (GOTO exp s3))
+
+Here we see that the list of items is kept with each state using the COMMENT
+declarations.  Furthermore, the conflicting actions are kept together with all
+but one of them COMMENTed out.  The user can easily see from the specification
+what is going on in a particular state and where the problems are.
+
+The user also has an option that no other tool permits: he can edit the
+generated PDA.  This could be used to do manual conflict resolution or to
+increase the power of the PDA.  For example, it might be possible to add only
+one or two states to create a PDA for an non-LALR(1) grammar without resorting
+to more powerful tools.  In any case, the user is not restricted to just editing
+the CFG representation.
+
+The PDA Compiler
+
+Our PDA compiler will take a LR(1) PDA with Scheme semantic actions and
+translate it into a Scheme function.  Again, we chose this particular subset
+because it is the most common case.  The compiler itself is a macro and looks
+like:
+
+  (parse/pda get-token drop-token token-case [parse-error] pda)
+
+The macro expands into a function that takes a token-stream argument and returns
+a pair containing the semantic value of the start symbol and the leftover
+token-stream.  GET-TOKEN, DROP-TOKEN, and TOKEN-CASE define the interface with
+the lexical analyzer.  PARSE-ERROR is an option function that will be called
+when an error occurs.  It has the same semantics as in Bison [3].
+
+There are two aspects to our lexer interface that are different from most other
+implementations: functional streams and a separation of the token class from the
+token value.  The first difference was to facilitate some of our other design
+decisions while the second difference allows us to generalize the language for
+the lexical analyzer.
+
+The functional stream interface is encoded using GET-TOKEN and DROP-TOKEN.
+GET-TOKEN is a function which takes a stream and a lookahead number and returns
+the correct token from the stream.  (The last number will always be 1 for LR(1)
+grammars.)  GET-TOKEN does not eat a token.  DROP-TOKEN does that.
+
+We decided to use functional streams in order to facilitate using symbols other
+than the EOS symbol to mark the end of the parse.  Such symbols have to show up
+on the token stream but because they are not shifted by the parser, they should
+not be taken off the stream.  Thus, the mechanism for lookaheads has to be
+separated from the mechanism for taking a token off the stream.  This could be
+provided by a "peek" function of some type but functional streams also allow
+this and are a better idea anyway.
+
+TOKEN-CASE is the means to generalize the language of the token stream.  It
+allows our compiler to handle tokens streams that span the complexity gamut from
+simple character streams to representations such as NUM, STRING, and ID encoded
+as numbers, strings, and symbols to records that contain everything including
+position information.  TOKEN-CASE is a syntactic keyword (probably a macro) that
+acts as a compiler for a decision tree.  It acts just like the built-in keyword
+CASE except that it takes a token (returned by GET-TOKEN) as the switch and the
+options are from the alphabet of token classes.
+
+TOKEN-CASE is an extremely general tool that allows users to define arbitrarily
+complex interfaces between the token language and the PDA language.  However,
+the user does not need to be burdened by this.  If he has a traditional lexer
+that returns the token's class itself, the built-in keyword CASE can be used.
+Moreover, the user is not limited to any one implementation of TOKEN-CASE.  The
+macro can expand into something as dumb as a big COND statement or, preferably,
+into something more efficient like a binary-search IF-nesting or a jump table.
+
+Benefits of the Little Languages Approach
+
+The little languages approach is an extremely powerful tool for breaking down
+complex problems.  Scheme allows the user to "mix and match" these languages and
+tools in whatever way is needed.  Our parser-generator could be taken out and
+replaced with a more general LR generator.  Alternatively, it could be replaced
+with a faster SLR generator.  On the other hand, our PDA compiler could be
+replaced with an interpreter or an optimizer could be inserted into the mix.
+The modularization potential of this is enormous.
+
+As an example, consider what it would take to write YACC given the tools
+described in this paper.  The only thing that would have to be done is to write
+the PDA compiler.  The semantic actions could be strings that look like C code
+(this is how YACC does it).  The tokens can be #defined-ed just like YACC does.
+The parser-generator algorithm can be used as is.  The only thing not written is
+the PDA compiler.  The PDA is nothing more than a state machine and its
+semantics are well understood.  Writing this PDA would likely get very boring.
+
+However, for all this power and abstraction, there is no burden placed on the
+end user.  We defined a simple, all-encompassing macro that combines the
+standard tools.  It is called PARSE/CFG and simply takes the CFG and lexer
+interface, compiles the semantic actions, compiles the CFG, and then generates
+the PDA function.  The user does not have to worry about any of the intermediate
+steps.  Thus, language hackers have enormous power at their fingertips while the
+common user can just write out a grammar with very little trouble.
+
+Future Work
+
+The most obvious way in which our tool could be improved is that additional
+modules could be added to it.  A parser generator that compiled LR(k) grammars
+could be useful.  Also, it might be interesting to look into the kinds of
+optimizations that can happen on a PDA.
+
+Another area to look into is the creation of a lexical analyzer tool would round
+out the capabilities provided by our tool.  Our tools has a very general lexer
+interface but doing IO by hand is still a pain.  A tool to handle this would be
+useful and potentiall interesting as there are probably languages involved with
+it as well (regular expressions, many different types of input, etc.)
+
+Finally, error handling needs a second look.  Our solution uses YACC-style error
+correction because it was the easiest to implement.  There are other methods,
+such as that used by ML-Yacc [8], and it would be nice for the error protocol to
+be orthogonal to the other languages involved.  We thought about this but could
+not find a good way to handle it.  Error handling is handled when the PDA
+executes but it must be defined back at the CFG level.  Any error protocol that
+is chosen has to survive two language translations.
+
+References
+
+[1] Boucher, D.  An Efficient and Portable Scheme LALR(1) Parser Generator
+    [online].  Available from:
+    http://www.iro.umontreal.ca/~boucherd/Lalr/documentation/lalr.html
+[2] DeRemer, F. and T. Pennello.  Efficient Computation of LALR(1) Look-Ahead
+    Sets.  In ACM Transactions on Programming Languages and Systems Vol. 4,
+    No. 4, October 1982.
+[3] Free Software Foundation.  Bison [online].  Available from:
+    http://www.gnu.org/software/bison/bison.html
+[4] Johnson, S.C.  YACC--Yet another compiler compiler.  Tech. Rep. CSTR 32,
+    Bell Labs., Murray Hill, N.J., 1974.
+[5] Serrano, M.  Bigloo, A "practical Scheme compiler," User Manual for version
+    2.6b, November 2003 [online].  Available from:
+    http://www-sop.inria.fr/mimosa/fp/Bigloo/doc/bigloo.pdf
+[6] Shivers, O.  A universal scripting framework, or Lambda: the ultimate
+    "little language."  In Concurrency and Parallelism, Programming, Networking,
+    and Security, Lecture Notes in Computer Science. pages 254-265,
+    Editors Joxan Jaffar and Roland H.-C.-Yap, 1996, Springer.
+[7] Sperber, M. and P. Thiemann.  Essence--An LR Parser Generator for Scheme
+    [online].  Available from:
+    http://www.informatik.uni-freiburg.de/proglang/software/essence/
+[8] Tarditi, D. and A. Appel.  ML-Yacc User's Manual [online].  Available from:
+    http://www.smlnj.org/doc/ML-Yacc/
