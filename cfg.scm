@@ -1,46 +1,66 @@
-; The input grammar is '( terminals production+ ).
-;
-; terminals is '( <sym|prec>+ )
-;   sym is a symbol (for undefined associativity)
-;   prec is '( <left|right|non> sym+ )
-;
-; production is '( sym rule+ )
-;   rule is <'((sym*) action) | '((prec sym) (sym*) action)>
-;     action is not-interpreted
-;     prec is a syntax-keyword
-;
-; The output grammar is
-; (make-cfg '(<sym|prec>+)
-;           `(,(make-rule sym (sym+) <sym| #f> action))
+(define-syntax cfg->pda
+  (syntax-rules (comment tokens no-shift end-of-parse non-term =>
+		 non right left eos error)
+    ((cfg->pda cfg)
+     (cfg->pda-hp () #f #f () () () cfg))))
 
-(define-syntax cfg-terminals
-  (syntax-rules ()
-    ((cfg-terminals (x ...) ())
-     (list x ...))
-    ((cfg-terminals (x ...) ((assoc terminals ...) rest ...))
-     (cfg-terminals (x ... (make-cfg-precedence 'assoc '(terminals ...)))
-		    (rest ...)))
-    ((cfg-terminals (x ...) (symbol rest ...))
-     (cfg-terminals (x ... 'symbol) (rest ...)))))
+(define-syntax cfg->pda-hp
+  (syntax-rules (comment tokens no-shift end-of-parse non-term =>
+		 non right left eos error)
+    ((cfg->pda-hp terminals err eoi eop ns rules
+		  ((comment whatever ...) rest ...))
+     (cfg->pda-hp terminals err eoi eop ns rules (rest ...)))
 
-(define-syntax cfg-rules
-  (syntax-rules (prec)
-    ((cfg-rules (x ...) ())
-     (list x ...))
-    ((cfg-rules (x ...) ((lhs) rest ...))
-     (cfg-rules (x ...) (rest ...)))
-    ((cfg-rules (x ...) ((lhs (rhs action) rules ...) rest ...))
-     (cfg-rules (x ... (make-cfg-rule 'lhs 'rhs '#f 'action))
-		((lhs rules ...) rest ...)))
-    ((cfg-rules (x ...) ((lhs ((prec sym) rhs action) rules ...) rest ...))
-     (cfg-rules (x ... (make-cfg-rule 'lhs 'rhs 'sym 'action))
-		((lhs rules ...) rest ...)))))
+;     ((cfg->pda-hp terminals err eoi eop (ns ...) rules
+; 		  ((no-shift terms ...) rest ...))
+;      (cfg->pda-hp terminals err eoi eop (ns ... terms ...) rules (rest ...)))
 
-(define-syntax cfg
-  (syntax-rules (prec)
-    ((cfg terminals (start whatever ...) rest ...)
-     (make-cfg (cfg-terminals () terminals)
-	       '*EOI*
-	       'error
-	       'start
-	       (cfg-rules () ((start whatever ...) rest ...))))))
+;     ((cfg->pda-hp terminals err eoi (eop ...) ns rules
+; 		  ((end-of-parse terms ...) rest ...))
+;      (cfg->pda-hp terminals err eoi (eop ... terms ...) ns rules (rest ...)))
+
+;     ((cfg->pda-hp terminals #f eoi eop ns rules
+; 		  ((tokens (error ident) token-decl ...) rest ...))
+;      (cfg->pda-hp terminals ident eoi eop ns rules ((tokens token-decl ...) rest ...)))
+;     ((cfg->pda-hp terminals err eoi eop ns rules
+; 		  ((tokens (error ident) token-decl ...) rest ...))
+;      (error "Multiple error token declarations."))
+
+;     ((cfg->pda-hp terminals err #f eop ns rules
+; 		  ((tokens (eos ident) token-decl ...) rest ...))
+;      (cfg->pda-hp terminals err ident eop ns rules ((tokens token-decl ...) rest ...)))
+;     ((cfg->pda-hp terminals err eoi eop ns rules
+; 		  ((tokens (eos ident) token-decl ...) rest ...))
+;      (error "Multiple End-of-Stream token declarations."))
+
+;     ((cfg->pda-hp (terminals ...) err eoi eop ns rules
+; 		  ((tokens token-decl1 token-decl ...) rest ...))
+;      (cfg->pda-hp (terminals ... token-decl1) err ident eop ns rules ((tokens token-decl ...) rest ...)))
+
+;     ((cfg->pda-hp terminals err eoi eop ns rules
+; 		  ((tokens) rest ...))
+;      (cfg->pda-hp terminals err eoi eop ns rules (rest ...)))
+
+;     ((cfg->pda-hp terminals err eoi eop ns rules
+; 		  ((non-term ident nt-clause1 nt-clause ...) rest ...))
+;      (process-nt-dec (terminals err eoi eop ns rules rest ...) ident () nt-clause1 nt-clause ...))
+
+;     ((cfg->pda-hp terminals err eoi eop ns rules ())
+;      (cfg->pda/args terminals err eoi eop ns rules))
+))
+
+(define-syntax process-nt-dec
+  (syntax-rules (comment tokens no-shift end-of-parse non-term =>
+		 non right left eos error)
+    ((process-nt-dec args nt (clauses ...) (comment whatever ...) nt-clause ...)
+     (process-nt-dec args nt (clauses ...) nt-clause ...))
+
+    ((process-nt-dec args nt (clauses ...) (=> stuff ...) nt-clause ...)
+     (process-nt-dec args nt (clauses ... (stuff ...)) nt-clause ...))
+
+    ((process-nt-dec (terminals err eoi eop ns (rules ...) rest ...) nt (clauses ...))
+     (cfg->pda-hp terminals err eoi eop ns (rules ... (nt clauses ...)) rest ...))))
+
+(define-syntax cfg->pda/args
+  (lambda (form rename compare)
+    form))

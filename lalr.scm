@@ -27,10 +27,19 @@
   ;; number.
   (num-nonterminals #f)
 
+  ;; This will either by a Scheme symbol of #f, depending on whether a symbol to
+  ;; mark "End of Stream" was declared in the grammar.
+  (eos-symbol #f)
+
   ;; This will be either a Scheme symbol or #f, depending on whether or not an
   ;; error symbol was defined for the grammar.  If one was defined, it will be
   ;; the last element of SYMBOLS.
   (error-symbol #f)
+
+  ;; This is the list of symbols that cannot be shifted.  This does not mean
+  ;; much to the code in this file but it affects error handling in the PDA so
+  ;; the information is passed on through.
+  (no-shift #f)
 
   ;; These three fields function together as a dense representation of the
   ;; grammar.  All three are vectors.  Each element RULE-LHS and RULE-RHS
@@ -344,8 +353,23 @@
 ;;; action defined).  This does not change the grammar any.  Any errors in the
 ;;; input string will be caught in the next state when the PDA finds that no
 ;;; shift is defined for the terminal symbol.
-(define (create-lalr-parser grammar)
-  (let ((lalr-record (convert-grammar grammar)))
+
+;;; ----------------------------------------------------------------------------
+;;; Arguments:
+;;; - TERMS = The list of terminal symbols used in the grammar.  This should
+;;;      contain all those that appear in PREC, ERR, and EOS as well.
+;;; - PREC = The precedence levels used by the grammar.  These should look like
+;;;      (prec term ...) where PREC is one of '(left right non)
+;;; - ERR = The name of the error symbol used by the grammar or #f.
+;;; - EOS = The name of the token that will mark the end-of-stream or #f.
+;;; - NO-SHIFT = A list of tokens that should never be shifted.  This should
+;;;      probably include EOS but that is not required.
+;;; - START = The name of the start non-terminal
+;;; - RULES = The list of non-terminal declarations.  These should look like:
+;;;      (non-term ([prec] (sym ...) action) ...)
+(define (create-lalr-parser terms prec err eos eop no-shift start rules)
+  (let ((lalr-record (convert-grammar terms prec err eos eop no-shift start
+				      rules)))
     (compute-precedence lalr-record)
     (compute-derives lalr-record)
     (compute-nullable lalr-record)
@@ -372,132 +396,88 @@
 ;;; This function sets the values of the following LALR-CONSTRUCTOR fields:
 ;;; - SYMBOLS
 ;;; - NUM-NONTERMINALS
+;;; - EOS-SYMBOL
+;;; - ERROR-SYMBOL
+;;; - NO-SHIFT
 ;;; - RULE-LHS
 ;;; - RULE-RHS
 ;;; - RULE-ITEMS
 ;;; - RULE-PRECEDENCE (This value will be modified by CALCULATE-PRECEDENCE)
 ;;; - RULE-ACTION
 ;;; - PRECEDENCE
-(define (convert-grammar grammar)
-  (if (not (cfg? grammar))
-      (error "Input is not a CFG Record."))
-
+(define (convert-grammar terminals prec err eos eop no-shift start rules)
+  (any (lambda (term)
+	 (if (not (symbol? term))
+	     (error "Invalid terminal symbol:" term)))
+       terminals)
   (let* ((lalr-record (make-lalr-constructor))
-	 (terminals (extract-terminals (cfg:terminals grammar)
-				       (cfg:error grammar)))
-	 (num-terminals (+ 1 (length terminals)))
-	 (nonterminals (extract-nonterminals (cfg:rules grammar)))
+	 (num-terminals (length terminals))
+	 (nonterminals (extract-nonterminals rules))
 	 (num-nonterminals (+ 1 (length nonterminals)))
-	 (eoi (cfg:eoi grammar)))
-
+	 (eop (if (null? eop) (list eos) eop)))
     (receive (symbols reverse-map)
 	     (create-symbol-map nonterminals num-nonterminals
 				terminals num-terminals)
 
-       ;; Deal with the symbol for end-of-input
-       (if (not (symbol? eoi))
-	   (error "cfg:eoi must be a symbol."))
-       (if (table-ref reverse-map eoi)
-	   (error "cfg:eoi cannot be a terminal or nonterminal symbol:" eoi))
-
-       (vector-set! symbols num-nonterminals eoi)
-       (table-set! reverse-map eoi num-nonterminals)
-
-       ;; Create the new start symbol (S' -> S <eoi>)
-       (let* ((start (cfg:start grammar))
-	      (new-start (create-start-symbol start reverse-map))
-	      (aug-grammar (cons (make-cfg-rule new-start (list start eoi)
-						#f '$1)
-				 (cfg:rules grammar))))
-
+       ;; Create the new start symbol (S' -> S <eop1> | S <eop2> | ...)
+       (let* ((new-start (create-start-symbol start reverse-map))
+	      (aug-grammar (cons (cons new-start
+				       (map (lambda (eop)
+					      (list (list start eop) #f))
+					    eop)) rules)))
 	 (if (or (not (symbol? start))
 		 (not (table-ref reverse-map start))
 		 (not (< (table-ref reverse-map start) num-nonterminals)))
-	     (error "cfg:start must be a nonterminal symbol"))
+	     (error "start must be a nonterminal symbol"))
 
 	 (vector-set! symbols 0 new-start)
 	 (table-set! reverse-map new-start 0)
 
-	 ;; Compile the grammar
-	 (receive (rule-lhs rule-rhs rule-items)
-		  (pack-grammar aug-grammar reverse-map num-nonterminals)
-
-	   (set-lalr-constructor:rule-lhs lalr-record rule-lhs)
-	   (set-lalr-constructor:rule-rhs lalr-record rule-rhs)
-	   (set-lalr-constructor:rule-items lalr-record rule-items))
-
-	 ;; Convert the precedence information to hard numbers
+	 ;; Convert the precedence information to numbers
 	 (receive (precedence-map associativity-map)
-		  (create-precedence-map (cfg:terminals grammar) num-terminals
-					 num-nonterminals reverse-map)
+		  (create-precedence-map prec num-terminals num-nonterminals
+					 reverse-map)
 
-	   (set-lalr-constructor:precedence-map lalr-record precedence-map)
-	   (set-lalr-constructor:associativity-map lalr-record
-						   associativity-map)
-	   (set-lalr-constructor:rule-precedence lalr-record
-	    (extract-rule-prec aug-grammar num-nonterminals reverse-map
-			       precedence-map)))
+	   ;; Compile the grammar
+	   (receive (rule-lhs rule-rhs rule-items rule-precedence rule-actions)
+		    (pack-grammar aug-grammar reverse-map precedence-map
+				  new-start no-shift)
 
-	 ;; Store the rule actions for later use
-	 (set-lalr-constructor:rule-actions lalr-record
-	  (list->vector (cons '() (map cfg-rule:action aug-grammar)))))
+	     (set-lalr-constructor:precedence-map lalr-record precedence-map)
+	     (set-lalr-constructor:associativity-map lalr-record
+						     associativity-map)	
+	     (set-lalr-constructor:rule-lhs lalr-record rule-lhs)
+	     (set-lalr-constructor:rule-rhs lalr-record rule-rhs)
+	     (set-lalr-constructor:rule-items lalr-record rule-items)
+	     (set-lalr-constructor:rule-precedence lalr-record rule-precedence)
+	     (set-lalr-constructor:rule-actions lalr-record rule-actions))))
 
-       ;; Set the last few fields and then return the record
+       ;;Set the last few fields then return the record
        (set-lalr-constructor:num-nonterminals lalr-record num-nonterminals)
        (set-lalr-constructor:symbols lalr-record symbols)
-       (set-lalr-constructor:error-symbol lalr-record (cfg:error grammar)))
+       (set-lalr-constructor:error-symbol lalr-record err)
+       (set-lalr-constructor:eos-symbol lalr-record eos)
+       (set-lalr-constructor:no-shift lalr-record no-shift))
 
     lalr-record))
 
-;;; This is a helper function used by CONVERT-GRAMMAR.  It takes the list of
-;;; terminals and precedence records in the input and returns a simple list of
-;;; terminals.  Along the way, it checks for invalid terminals symbols.
-;;; Duplicate terminal declarations will be caught by CREATE-SYMBOL-MAP.
-(define (extract-terminals grammar-terminals error-symbol)
-  (if (not (list? grammar-terminals))
-      (error "cfg:terminals is not a list"))
-  (if (and error-symbol (not (symbol? error-symbol)))
-      (error "cfg:error is an invalid symbol"))
-  (fold-right
-   (lambda (element term-list)
-     (cond ((and (eq? element error-symbol) error-symbol)
-	    (error "cfg:error cannot be the same as a terminal symbol"))
-	   ((symbol? element)
-	    (cons element term-list))
-	   ((cfg-precedence? element)
- 	    (if (list? (cfg-precedence:terminals element))
- 		(fold-right
-		 (lambda (element term-list)
-		   (cond ((and (eq? element error-symbol) error-symbol)
-			  (error
-			   "cfg:error cannot be the same as a terminal symbol"))
-			 ((symbol? element)
-			  (cons element term-list))
-			 (else
-			  (error "Invalid terminal symbol:" element))))
-		 term-list (cfg-precedence:terminals element))
- 		(error "precedence:terminals must be a list")))
-	   (else
-	    (error "Invalid terminal declaration:" element))))
-   (if error-symbol (list error-symbol) '()) grammar-terminals))
+
 
 ;;; This is a helper function used by CONVERT-GRAMMAR.  It takes the list of
 ;;; rules and returns a list of all the non-terminal symbols that the rules
 ;;; define.  It also checks to see that the non-terminal names are valid.
 ;;; Nonterminal names that are the same as terminal names will be caught by
 ;;; CREATE-SYMBOL-MAP.
-(define (extract-nonterminals grammar-rules)
-  (if (not (list? grammar-rules))
-      (error "cfg:rules is not a list"))
-  (delete-duplicates
-   (map (lambda (element)
-	  (if (cfg-rule? element)
-	      (let ((x (cfg-rule:left-side element)))
-		(if (symbol? x)
-		    x
-		    (error "Invalid nonterminal name:" x)))
-	      (error "cfg:rules must contain only rule records")))
-	grammar-rules)))
+(define (extract-nonterminals rules)
+  (fold-right
+   (lambda (rule non-terms)
+     (let ((nt (car rules)))
+       (if (not (symbol? nt))
+	   (error "Invalid non-terminal name:" nt))
+       (if (member nt non-terms)
+	   (error "Duplicate non-terminal declaration"))
+       (cons nt non-terms)))
+   '() rules))
 
 ;;; This is a helper function used by CONVERT-GRAMMAR.  It creates a mapping
 ;;; between the Scheme symbols used in the grammar to the numbers used
@@ -533,99 +513,109 @@
 ;;; This is a helper function used by CONVERT-GRAMMAR.  It creates a the new
 ;;; start symbol and insures that it does not conflict with any symbols already
 ;;; existing in the grammar.
-(define (create-start-symbol grammar-start reverse-map)
+(define (create-start-symbol start reverse-map)
   (let loop ((sym '*start))
     (if (table-ref reverse-map sym)
 	(loop (string->symbol (string-append (symbol->string sym) "*")))
 	sym)))
 
-;;; This is a helper function used by CONVERT-GRAMMAR.  It creates the RULE-LHS,
-;;; RULE-RHS, and RULE-ITEMS fields of the lalr-constructor.
-(define (pack-grammar grammar-rules reverse-map eoi-num)
-  (let* ((num-rules (+ (length grammar-rules) 1))
-	 (rule-lhs (make-vector num-rules #f))
-	 (rule-rhs (make-vector num-rules #f))
-	 (num-items (fold (lambda (rule num-items)
-			    (+ num-items (length (cfg-rule:right-side rule)) 1))
-			  0 grammar-rules))
-	 (rule-items (make-vector (+ 1 num-items) #f)))
-
-    (let rule-loop ((rules grammar-rules) (item-num 0) (rule-num 1))
-      (if (pair? rules)
-	  (begin
-	    (vector-set! rule-lhs rule-num
-			 (table-ref reverse-map
-				    (cfg-rule:left-side (car rules))))
-	    (vector-set! rule-rhs rule-num item-num)
-	    (let item-loop ((syms (cfg-rule:right-side (car rules)))
-			    (item-num item-num))
-	      (if (pair? syms)
-		  (let ((num (table-ref reverse-map (car syms))))
-		    (cond ((eq? num #f)
-			   (error "Unknown symbol:" (car syms)))
-			  ((and (= num eoi-num) (not (= rule-num 1)))
-			   (error "cfg:eoi cannot be used in the grammar"))
-			  (else
-			   (vector-set! rule-items item-num num)
-			   (item-loop (cdr syms) (+ item-num 1)))))
-		  (begin
-		    (vector-set! rule-items item-num (- rule-num))
-		    (rule-loop (cdr rules) (+ item-num 1) (+ rule-num 1))))))))
-
-    (values rule-lhs rule-rhs rule-items)))
-
-;;; This is a helper function used by CONVERT-GRAMMAR.  It take the list of
-;;; terminals symbols and precedence records from the input and returns two
-;;; values.  The first is a vector that maps terminal symbols to a number which
-;;; represents the terminal's precedence.  Higher numbers represent higher
-;;; precedence and zero is assigned to terminals without defined precedence.
-;;; The second value is a vector that maps precedence numbers to that precedence
-;;; level's corresponding associativity.  Level 0 is assigned the value of
-;;; 'right to correspond to choosing shifts over reductions.
-(define (create-precedence-map terminals num-terms num-nonterminals reverse-map)
+;;; This is a helper function used by CONVERT-GRAMMAR.  It takes the precedence
+;;; declarations from the input and returns two records.  The first is a vector
+;;; that maps terminals symbols to a number which represents the terminal's
+;;; precedence.  Higher numbers represent higher precedence and zero is assigned
+;;; to terminals without defined precedence.  The second value is a vector that
+;;; maps precedence numbers to that precedence level's corresponding
+;;; associativity.  Level 0 is assigned the value of 'right to correspond to
+;;; choosing shifts over reductions.
+(define (create-precedence-map prec num-terms num-nonterminals reverse-map)
   (let* ((precedence-map (make-vector num-terms 0))
 	 (rev-assoc-map (cdr
 	  (fold-right
-	   (lambda (element count-and-assoc)
-	     (if (cfg-precedence? element)
-		 (let ((associativity (cfg-precedence:associativity element)))
-		   (for-each
-		    (lambda (terminal)
-		      (vector-set! precedence-map (- (table-ref reverse-map
-								terminal)
-						     num-nonterminals)
-				   (car count-and-assoc)))
-		    (cfg-precedence:terminals element))
-		   (if (not (member associativity '(left right non)))
-		       (error "Unknown associativity:" associativity))
-		   (cons (+ 1 (car count-and-assoc))
-			 (cons associativity (cdr count-and-assoc))))
-		 count-and-assoc))
-	   '(1 . (right)) terminals))))
+	   (lambda (prec-decl count-dot-assoc)
+	     (for-each
+	      (lambda (terminal)
+		(vector-set! precedence-map (- (table-ref reverse-map terminal)
+					       num-nonterminals)
+			     (car count-dot-assoc)))
+	      (cdr prec-decl))
+	     (if (not (member (car prec-decl) '(left right non)))
+		 (error "Unknown associativity:" (car prec-decl)))
+	     (cons (+ 1 (car count-dot-assoc))
+		   (cons (car prec-decl) (cdr count-dot-assoc))))
+	   '(1 . (right)) prec))))
     (values precedence-map (list->vector (reverse rev-assoc-map)))))
 
-;;; This is a helper function used by CONVERT-GRAMMAR.  It takes a list of rules
-;;; and returns a vector containing their precedence values.  Along the way, it
-;;; makes sure that any terminal symbols found are valid and coverts them to
-;;; thier corresponding precedence values.  The returned vector has a dummy
-;;; first element to correspond to the fact that RULE-LHS & RULE-RHS do not use
-;;; their first element.
-(define (extract-rule-prec rules num-nonterminals reverse-map precedence-map)
-  (list->vector (cons #f
-   (map
-    (lambda (rule)
-      (let ((prec (cfg-rule:precedence rule)))
-	(cond ((not prec) #f)
-	      ((table-ref reverse-map prec) =>
-	       (lambda (num)
-		 (if (< num num-nonterminals)
-		     (error
-		      "Precedence cannot be based on a nonterminal symbol:"
-		      prec)
-		     (vector-ref precedence-map (- num num-nonterminals)))))
-	      (else
-	       (error "Unknown terminal symbol:" prec)))))
-    rules))))
+;;; This is a helper function used by CONVERT-GRAMMAR.  Its primary purpose is
+;;; to iterate over all the rules and change them to the internal format defined
+;;; by RULE-LHS, RULE-RHS, and RULE-ITEMS.  Along the way, it also extracts
+;;; information about rule precedence and actions.
+(define (pack-grammar nonterm-decls reverse-map prec-map new-start no-shift)
+  (receive (rule-lhs rule-rhs rule-items rule-precedence rule-actions)
+	   (allocate-rule-vectors nonterm-decls)
+    (let nt-loop ((nonterm-decls nonterm-decls) (item-num 0) (rule-num 1))
+      (if (pair? nonterm-decls)
+	  (let rule-loop ((rules (cdar nonterm-decls))
+			  (item-num item-num) (rule-num rule-num))
+	    (if (pair? rules)
+		(let* ((has-prec (= (length (car rules)) 3))
+		       (syms (if has-prec (cadar rules) (caar rules)))
+		       (action (if has-prec (caddr rules) (cadar rules))))
+		  (vector-set! rule-lhs rule-num
+			       (table-ref reverse-map (caar nonterm-decls)))
+		  (vector-set! rule-rhs rule-num item-num)
+		  (vector-set! rule-actions rule-num action)
+		  (if has-prec
+		      (begin
+			(if (not (symbol? (caar rules)))
+			    (error "Rule precedence must be a symbol:"
+				   (caar rules)))
+			(let ((num (table-ref reverse-map (caar rules))))
+			  (if num
+			      (vector-set! rule-precedence rule-num num)
+			      (error
+			       "Rule precedence must be a terminal symbol:"
+			       (caar rules))))))
+		  (let item-loop ((syms syms) (item-num item-num))
+		    (if (pair? syms)
+			(let ((num (table-ref reverse-map (car syms))))
+			  (cond ((eq? num #f)
+				 (error "Unknown symbol:" (car syms)))
+				((and (member (car syms) no-shift)
+				      (not (eq? (car nonterm-decls) new-start)))
+				 (error "No-Shift tokens cannot appear in the grammar:" (car syms)))
+				(else
+				 (vector-set! rule-items item-num num)
+				 (item-loop (cdr syms) (+ item-num 1)))))
+			(begin
+			  (vector-set! rule-items item-num (- rule-num))
+			  (rule-loop (cdr rules) (+ item-num 1)
+				     (+ rule-num 1))))))
+		(nt-loop (cdr nonterm-decls) item-num rule-num)))))
+
+    (values rule-lhs rule-rhs rule-items rule-precedence rule-actions)))
+
+;;; This is a helper function used by PACK-GRAMMAR.  It does a quick iteration
+;;; over all the rules to find out what size vectors are needed.
+(define (allocate-rule-vectors rules)
+  (let rule-loop ((num-rules 1) (num-items 1) (rules rules))
+    (if (pair? rules)
+	(let item-loop ((num-rules num-rules) (num-items num-items)
+			(right-sides (cdar rules)))
+	  (cond ((not (pair? right-sides))
+		 (rule-loop num-rules num-items (cdr rules)))
+		((= (length (car right-sides)) 2)
+		 (item-loop (+ (length (caar right-sides)) 1 num-items)
+			    (+ 1 num-rules) (cdr right-sides)))
+		((= (length (car right-sides)) 3)
+		 (item-loop (+ (length (cadar right-sides)) 1 num-items)
+			    (+ 1 num-rules) (cdr right-sides)))
+		(else
+		 (error "Malformed right-side for non-terminal:" (car rules)))))
+	(values (make-vector num-rules #f)     ;rule-lhs
+		(make-vector num-rules #f)     ;rule-rhs
+		(make-vector num-items #f)     ;rule-items
+		(make-vector num-rules #f)     ;rule-precedence
+		(make-vector num-rules #f))))) ;rule-actions
 
 ;;;-----------------------------------------------------------------------------
 ;;; This function is responsible for computing the RULE-PRECEDENCE field.  The
@@ -667,12 +657,12 @@
   (let ((rule-lhs (lalr-constructor:rule-lhs lalr-record))
 	(derives (make-vector (lalr-constructor:num-nonterminals lalr-record)
 			      '())))
-    (let loop ((rule-num 1))
-      (if (< rule-num (vector-length rule-lhs))
+    (let loop ((rule-num (- (vector-length rule-lhs) 1)))
+      (if (> rule-num 0)
 	  (let ((non-term (vector-ref rule-lhs rule-num)))
 	    (vector-set! derives non-term
 			 (cons rule-num (vector-ref derives non-term)))
-	    (loop (+ rule-num 1)))))
+	    (loop (- rule-num 1)))))
     (set-lalr-constructor:derives lalr-record derives)))
 
 ;;;-----------------------------------------------------------------------------
@@ -853,10 +843,15 @@
 ;;; result is store in the STATES field of LALR-RECORD.
 (define (compute-LR0-states lalr-record)
   (let* ((num-symbols (vector-length (lalr-constructor:symbols lalr-record)))
+	 (num-nonterminals (lalr-constructor:num-nonterminals lalr-record))
+	 (rule-rhs (lalr-constructor:rule-rhs lalr-record))
 	 (rule-items (lalr-constructor:rule-items lalr-record))
+	 (derives (lalr-constructor:derives lalr-record))
+	 (init-items (map (lambda (i) (vector-ref rule-rhs i))
+			  (vector-ref derives 0)))
 	 (item-map ((make-table-maker equal? (lambda (lst) (fold + 0 lst)))))
-	 (start-state (make-state 0 #f '(0))))
-    (table-set! item-map '(0) start-state)
+	 (start-state (make-state 0 #f init-items)))
+    (table-set! item-map init-items start-state)
 
     (let state-loop ((state-stack (list start-state))
 		     (state-list (list start-state)))
@@ -877,10 +872,14 @@
 			     (next-loop (+ symbol 1) (cons state shifts)
 					state-list state-stack)))
 			  (else
-			   (let ((new-state
+			   (let* ((new-state
 				  (make-state (+ (state:number (car state-list))
 						 1)
 					      symbol next-items)))
+			     (if (and (= (state:number state) 0)
+				      (< symbol num-nonterminals))
+				 (set-lalr-constructor:accept-state lalr-record
+				   (state:number new-state)))
 			     (table-set! item-map next-items new-state)
 			     (next-loop (+ symbol 1) (cons new-state shifts)
 					(cons new-state state-list)
@@ -1336,6 +1335,7 @@
 	 (rule-rhs (lalr-constructor:rule-rhs lalr-record))
 	 (rule-items (lalr-constructor:rule-items lalr-record))
 	 (states (lalr-constructor:states lalr-record))
+	 (accept-state (lalr-constructor:accept-state lalr-record))
 	 (num-states (vector-length states))
 	 (consistent (lalr-constructor:consistent lalr-record))
 	 (reduction-map (lalr-constructor:reduction-map lalr-record))
@@ -1453,7 +1453,7 @@
 			      (out-action
 			       (cond ((< action 0)
 				      (list sym 'reduce (- (+ action 1))))
-				     ((= symbol-num num-nonterminals)
+				     ((= state-num accept-state)
 				      (list sym 'accept))
 				     (else
 				      (list sym 'shift action)))))

@@ -32,7 +32,7 @@
 	  ;; lalr.scm
 	  create-lalr-parser
 	  ;; cfg.scm
-	  (cfg :syntax)
+	  ;(cfg :syntax)
 	  ;; utilities.scm
 	  print-LR-program
 	  ;; engine.scm
