@@ -1,0 +1,42 @@
+Glanville & Graham. A new method for compiler code generation. 
+Proc of the Fifth ACM Symp on POPL. 231-240 1978
+How to use a parser for code generation! (With some extensions)
+Everyone cites this as a reason why LR parser tools are good beyond
+  simply turning source code into ASTs. I should figure out what
+  extensions this requires, because my framework would be great at this.
+
+Similarly:
+Ganapathi & Fischer, Affix grammar-driver code generation
+  ACM TOPLAS 4(7) 560-599 (1985)
+Ganapathi, Semantic predicates in parser generators
+  Comput. Lang. 14 (1) 25-33 (1989)
+
+Harbison & Steele, *C: A Reference Manual* Prentice-Hall 1984
+  Has a complete LR grammar for C
+D. Cooper, *Standard Pascal: User Reference Manual* Norton 1983
+  Has a grammar for Pascal
+
+A.J. Demers, Generalized left corner parsing
+  Proc. Fourth Annual ACM Symposium on Principles of Programming Languages
+  170-182 (1977).
+  Oddball variant -- LR until you've predicted, then recursive descent.
+
+G.H. Roberts, Recursive Ascent: An LR analog to recursive descent
+  SIGPLAN Notices 23 (8) 23-29 (1988)
+
+Eliminating unit productions:
+
+  D Pager, Eliminating unit productions from LR parsers, Acta Informatica 9
+  31-59 1979
+
+  L Schmitz, On the correct elimination of chain productions from LR parsers
+  Intl J of Computer Mathematics 15 99-116 (1984)
+
+
+Said to be better than Deremer-Penello's algo:
+  F. Ives, Unifying View of Recent LALR(1) Lookahead Set Algorithms, SIGPLAN
+  Notices 21, 7 (1986), 131-135.
+
+Frequently cited paper on error recovery/repair:
+  J. Röhrich, Methods for the Automatic Construction of Error Correcting
+  Parsers, Acta Inf. 13, 2 (1980), 115-139
