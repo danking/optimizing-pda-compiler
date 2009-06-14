@@ -26,7 +26,7 @@
 ;; An InputVal is one of Number, Symbol, String
 
 ;; This adder takes inputs of the form "33+12" and adds them.
-(define adder
+(define adder-PDA
   (compile+convert-to-pda
    ((tokens DIGIT
 	    (left PLUS)
@@ -59,15 +59,70 @@
 (define (adder-parser source lex-state)
   (letrec 
       (
-       ; Rules are copied verbatim. They are what is preserved entirely in the CFG->Scheme process.
-       (RULE-1 #f)
-       (RULE-2 (lambda (num-1 PLUS num-2)
-		 (+ num-1 num-2)))
-       (RULE-3 (lambda (num DIGIT)
-		 (+ (* num 10)
-		    (- (char->ascii DIGIT)
-		       (char->ascii #\0)))))
-       (RULE-4 (lambda () 0))
+       ; Rules contain a lambda which is copied verbatim. They are preserved entirely in the CFG->Scheme process.
+       (RULE-1 (lambda (stack lex-state)
+		 (let* ((produced #f) ; TODO: What is this?
+			(stack (cons (make-sframe '*start produced bottom)
+				     stack))
+			(shift-to (GOTO-num bottom)))
+		   (shift-to stack lex-state))))
+
+       (RULE-2 (lambda (state lex-state)
+		 ; Reduce: Ternary
+		 (let* ((args '())
+			(args (cons (sframe-val (car stack)) args))
+			(stack (cdr stack))
+			(args (cons (sframe-val (car stack)) args))
+			(stack (cdr stack))
+			(args (cons (sframe-val (car stack)) args))
+			(stack (cdr stack)))
+		   ; look at current top of stack, which is as low as we go
+		   (let* ((tos (car stack))
+			  (bottom (sframe-state tos)))
+		     
+		     ; Produce and shift an 'exp
+		     (let* ((produced (apply (lambda (num-1 PLUS num-2)
+					       (+ num-1 num-2))
+					     args))
+			    (stack (cons (make-sframe 'exp produced bottom)
+					 stack))
+			    (shift-to (GOTO-exp bottom)))
+		       (shift-to stack lex-state))))))
+
+       (RULE-3 (lambda (stack lex-state)
+		 (let* ((args '())
+			(args (cons (sframe-val (car stack)) args))
+			(stack (cdr stack))
+			(args (cons (sframe-val (car stack)) args))
+			(stack (cdr stack)))
+		   ; look at current top of stack, which is as low as we go
+		   (let* ((tos (car stack))
+			  (bottom (sframe-state tos)))
+		      
+		     ; Produce and shift a 'num
+		     (let* ((produced (apply (lambda (num DIGIT)
+					       (+ (* num 10)
+						  (- (char->ascii DIGIT)
+						     (char->ascii #\0))))
+					     args))
+			    (stack (cons (make-sframe 'num produced bottom)
+					 stack))
+			    (shift-to (GOTO-num bottom)))
+		       (shift-to stack lex-state))))))
+
+       (RULE-4 (lambda (stack lex-state)
+		 ; Reduce: Nullary
+		 (let* ((args '()))
+		    
+		    (let* ((tos (car stack))
+			   (bottom (sframe-state tos))) ; grab the state that we reduced to
+		    
+        	      ; Produce and shift a 'num
+		      (let* ((produced (apply (lambda () 0) args)) ; run rule against stuff from stack
+			     (stack (cons (make-sframe 'num produced bottom) ; shift the semantic value onto the stack
+					  stack))
+			     (shift-to (GOTO-num bottom))) ; lookup what state follows the reduction
+			(shift-to stack lex-state)))))) ; shift to next state
 
        ; Accept and error states
        (accept (lambda (value)
@@ -87,19 +142,7 @@
        ; State-lambdas take a stack and a lex state and either shift or reduce
        (STATE-0 (lambda (stack lex-state)
 		  ; No lookahead required to choose an action.
-
-		  ; Reduce: Nullary
-		  (let* ((args '()))
-		    
-		    (let* ((tos (car stack))
-			   (bottom (sframe-state tos))) ; grab the state that we reduced to
-		    
-        	      ; r4 is known to produce a 'num
-		      (let* ((produced (RULE-4)) ; run rule against stuff from stack
-			     (stack (cons (make-sframe 'num produced bottom) ; shift the semantic value onto the stack
-					  stack))
-			     (shift-to (GOTO-num bottom))) ; lookup what state follows the reduction
-			(shift-to stack lex-state)))))) ; shift to next state
+		  (RULE-4 stack lex-state)))
        
        ; This one accepts unconditionally.
        (STATE-1 (lambda (stack lex-state))
@@ -132,35 +175,12 @@
 		  ))
        
        (STATE-3 (lambda (stack lex-state)
-		  (let* ((args '())
-			 (args (cons (sframe-val (car stack)) args))
-			 (stack (cdr stack))
-			 (args (cons (sframe-val (car stack)) args))
-			 (stack (cdr stack)))
-		    ; look at current top of stack, which is as low as we go
-		    (let* ((tos (car stack))
-			   (bottom (sframe-state tos)))
-		      
-		      ; r3 is known to produce a 'num
-		      (let* ((produced (apply RULE-3 args))
-			     (stack (cons (make-sframe 'num produced bottom)
-					  stack))
-			     (shift-to (GOTO-num bottom)))
-			(shift-to stack lex-state))))))
+		  ; No lookahead needed
+		  (RULE-3 stack lex-state)))
 
        (STATE-4 (lambda (stack lex-state)
-		  (let* ((args '()))
-
-		    ; look at current top of stack, which is as low as we go
-		    (let* ((tos (car stack))
-			   (bottom (sframe-state tos)))
-		      
-		      ; r4 is known to produce a 'num
-		      (let* ((produced (apply RULE-4 args))
-			     (stack (cons (make-sframe 'num produced bottom)
-					  stack))
-			     (shift-to (GOTO-num bottom)))
-			(shift-to stack lex-state))))))
+		  ; No lookahead needed
+		  (RULE-4 stack lex-state)))
 
        ; This state is more normal, having just a shift and reduce
        (STATE-5 (lambda (stack lex-state)
@@ -174,46 +194,23 @@
 				       lex-state))
 			     
 			     ; perform a reduce
-			     ((*EOF*)
-			      ; Reduce: Ternary
-			      (let* ((args '())
-				     (args (cons (sframe-val (car stack)) args))
-				     (stack (cdr stack))
-				     (args (cons (sframe-val (car stack)) args))
-				     (stack (cdr stack))
-				     (args (cons (sframe-val (car stack)) args))
-				     (stack (cdr stack)))
-				; look at current top of stack, which is as low as we go
-				(let* ((tos (car stack))
-				       (bottom (sframe-state tos)))
-				  
-				  ; r4 is known to produce a 'exp
-				  (let* ((produced (apply RULE-2 args))
-					 (stack (cons (make-sframe 'program produced bottom)
-						      stack))
-					 (shift-to (GOTO-exp bottom)))
-				    (shift-to stack lex-state)))))
+			     ((*EOF*) (RULE-2 stack lex-state))
 			     
 			     ; otherwise start recovery... or whatever
 			     (else (error (string-append "Parser bombed reading lexer state "
 							 (number->string lexer-state)))) ; TODO don't assume number
 			     ))
 		  ))
- 
-      (STATE-6 (lambda (stack lex-state)
-		  (let* ((args '()))
 
-		    ; look at current top of stack, which is as low as we go
-		    (let* ((tos (car stack))
-			   (bottom (sframe-state tos)))
-		      
-		      ; r1 is a Boolean <=== NOTE
-		      (let* ((produced RULE-1)
-			     (stack (cons (make-sframe 'num produced bottom) ; TODO: how to handle RULE-1?
-					  stack))
-			     (shift-to (GOTO-num bottom)))
-			(shift-to stack lex-state))))))
-      )))
+      ; TODO: This state isn't called by anything...
+      (STATE-6 (lambda (stack lex-state)
+		 (RULE-1 stack lex-state)))
+      
+      )
+
+    (STATE-2 '() lex-state))) ; kick off the parser TODO: Which state?
+
+(define adder-result (adder-parser ))
 
 ;===============================================================================
 #|
