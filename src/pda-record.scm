@@ -233,7 +233,7 @@
 	'(1 2 3 4 5 6 7 f))
 
 
-;; build-shifts : [Listof (Token StateName)] -> [Listof Shift]
+;; build-shifts : [Listof ([Listof Token] StateName)] -> [Listof Shift]
 ;; Collapse a list of lookahead/destination pairs into a list of Shift.
 ;; In the resulting list, no two entries will have the same destination name.
 (define (build-shifts pairs)
@@ -261,7 +261,7 @@
 	(lambda (sl1 sl2)
 	  (list=? shift= sl1 sl2)))
 
-;; build-reduces : [Listof (Token RuleName)] -> [Listof Reduce]
+;; build-reduces : [Listof ([Listof Token] RuleName)] -> [Listof Reduce]
 ;; Collapse a list of lookahead/rulename pairs into a list of Reduce.
 ;; In the resulting list, no two entries will have the same rulename.
 (define (build-reduces pairs)
@@ -302,41 +302,29 @@
 		 (reduce-clauses '()) ; [Listof (Token RuleName)]
 		 (accepts '()))
       (if (null? remain)
-	  (begin
-	    (display "Shift pairs" shift-clauses)
-	    (display "Reduce pairs" reduce-clauses)
-	    (values (make-state name
-				(build-shifts shift-clauses)
-				(build-reduces reduce-clauses)
-				accepts)
-		    gotos))
-	  (begin
-	    (debug "Remaining state clauses" remain)
-	    (let* ((top (car remain))
-		   (rest (cdr remain))
-		   (type (car top))
-		   (data (cdr top)))
-	      (case type
-		((COMMENT)
-		 (gather rest gotos shift-clauses reduce-clauses accepts))
-		((SHIFT)
-		 (debug "shift clause data" data)
-		 (gather rest gotos (append data shift-clauses) reduce-clauses accepts))
-		((REDUCE)
-		 (debug "reduce clause data" data)
-		 (gather rest gotos shift-clauses (append data reduce-clauses) accepts))
-		((ACCEPT)
-		 (debug "accept clause data" data)
-		 (gather rest gotos shift-clauses reduce-clauses (append data accepts)))
-		((GOTO)
-		 (debug "goto clause data" data)
-		 (let* ((nonterm (car data))
-			(next (cadr data))
-			(new-goto (make-goto nonterm name next)))
-		   (debug "goto nonterm" nonterm)
-		   (debug "goto next" next)
-		   (debug "goto new-goto" new-goto)
-		   (gather rest (cons new-goto gotos) shift-clauses reduce-clauses accepts))))))))))
+	  (values (make-state name
+			      (build-shifts shift-clauses)
+			      (build-reduces reduce-clauses)
+			      accepts)
+		  gotos)
+	  (let* ((top (car remain))
+		 (rest (cdr remain))
+		 (type (car top))
+		 (data (cdr top)))
+	    (case type
+	      ((COMMENT)
+	       (gather rest gotos shift-clauses reduce-clauses accepts))
+	      ((SHIFT)
+	       (gather rest gotos (cons data shift-clauses) reduce-clauses accepts))
+	      ((REDUCE)
+	       (gather rest gotos shift-clauses (cons data reduce-clauses) accepts))
+	      ((ACCEPT)
+	       (gather rest gotos shift-clauses reduce-clauses (append (car data) accepts)))
+	      ((GOTO)
+	       (let* ((nonterm (car data))
+		      (next (cadr data))
+		      (new-goto (make-goto nonterm name next)))
+		 (gather rest (cons new-goto gotos) shift-clauses reduce-clauses accepts)))))))))
 
 (receive (state gs) (parse-state-sexp '(S1
 					(REDUCE (BAR) R3)
@@ -346,14 +334,12 @@
 					(GOTO num S7)
 					(REDUCE (FOO) R3)))
 	 (begin
-	   (debug "Testing state" state)
 	   (assert state
 		   (make-state 'S1
 			       (list (make-shift '(L-PAREN) 'S4))
 			       (list (make-reduce '(BAR FOO) 'R3))
 			       (list 'DIGIT))
 		   state=)
-	   (debug "Testing gotos" gs)
 	   (assert gs
 		   (list (make-goto 'num 'S1 'S7)
 			 (make-goto 'exp 'S1 'S5))
@@ -382,13 +368,14 @@
 	    ((NO-SHIFT)
 	     (gather-main rest states gotos rules (append data noshifts) start))
 	    ((STATE)
-	     (receive (new-state new-gotos) (parse-state-sexp data)
-		      (gather-main rest
-				   (cons new-state states)
-				   (append new-gotos gotos)
-				   rules
-				   noshifts
-				   start)))
+	     (let ((start (or start (car data)))) ; grab name as start symbol if not yet set
+	       (receive (new-state new-gotos) (parse-state-sexp data)
+			(gather-main rest
+				     (cons new-state states)
+				     (append new-gotos gotos)
+				     rules
+				     noshifts
+				     start))))
 	    ((RULE)
 	     (gather-main rest states gotos (cons (apply make-rule data) rules) noshifts start))
 	    (else (error "Unrecognized PDA clause.")))))))
