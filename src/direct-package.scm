@@ -59,6 +59,7 @@
      (if debug-mode
 	 (begin
 	   (display msg)
+	   (display ": ")
 	   (p val))))))
 
 
@@ -79,6 +80,48 @@
 	#f)
 (assert (list=? = '(1 2 3 4) '(1 2 3))
 	#f)
+
+
+;; define-record-simple : 'Name ('Field ...) -> Void
+;; Define a record-type and record-discloser for the given name and fields.
+;; Example: (define-record-simple foo (bar qux)) gives structure foo with fields bar and qux.
+(define-syntax define-record-simple
+  (lambda (e r c)
+    (let* ((symbol+ (lambda syms
+		      (string->symbol (apply string-append (map symbol->string syms)))))
+	   (params (cdr e))
+	   (name (car params))		      ; 'sframe
+	   (fields (cadr params))	      ; '(type val state)
+	   (tag (symbol+ ': name))	      ; ':sframe
+	   (pred (symbol+ name '?))	      ; 'sframe?
+	   (make (symbol+ 'make- name))	      ; 'make-sframe
+	 
+	   (%lambda (r 'lambda))
+	   (%define-record-type (r 'define-record-type))
+	   (%define-record-discloser (r 'define-record-discloser))
+	   (%begin (r 'begin))
+	   (%cons (r 'cons))
+	   (%list (r 'list))
+	 
+	   (constructor (cons make fields)) ; '(make-sframe type val state)
+	   (accessors (map (lambda (field)
+			     (list field
+				   (symbol+ name '- field)))
+			   fields)) ; '((type sframe-type) (val sframe-val) (state sframe-state))
+	   (disclosers (map (lambda (acc)
+			      `(,(cadr acc) o))
+			    accessors)) ; '((sframe-type o) (sframe-val o) (sframe-state o))
+	   (definer (append (list %define-record-type name tag
+				  constructor
+				  pred)
+			    accessors))
+	   (discloser `(,%define-record-discloser
+			,tag
+			(,%lambda (o)
+				  ,(cons 'list (cons `(quote ,make) disclosers))))))
+      `(,%begin ,definer ,discloser))))
+
+
 
 ; Basic adder CFG as PDA (see CFG in playground file.)
 (define (adder-exp num-1 PLUS num-2)
