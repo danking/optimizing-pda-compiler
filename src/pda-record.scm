@@ -30,98 +30,25 @@
 ;;; No-Shift = Symbol
 
 ;; A Shift is (make-shift [ListOf Token] StateName)
-(define-record-type shift :shift
-  (make-shift lookaheads next-state) ; [ListOf Token] StateName -> Shift
-  shift?
-  (lookaheads shift-lookaheads) ; [ListOf Token]
-  (next-state shift-next-state)) ; StateName
-
-(define-record-discloser :shift
-  (lambda (o)
-    `(shift
-      ,(shift-lookaheads o)
-      ,(shift-next-state o))))
+(define-record-simple shift (lookaheads next-state))
 
 ;; A Reduce is (make-reduce [ListOf Token] RuleName)
-(define-record-type reduce :reduce
-  (make-reduce lookaheads rule-name) ; [ListOf Token] RuleName -> Reduce
-  reduce?
-  (lookaheads reduce-lookaheads) ; [ListOf Token]
-  (rule-name reduce-rule-name)) ; RuleName
-
-(define-record-discloser :reduce
-  (lambda (o)
-    `(reduce
-      ,(reduce-lookaheads o)
-      ,(reduce-rule-name o))))
+(define-record-simple reduce (lookaheads rule-name))
 
 ;; A Goto is (make-goto NonTerm StateName StateName)
-(define-record-type goto :goto
-  (make-goto nonterm from next) ; NonTerm StateName StateName -> Goto
-  goto?
-  (nonterm goto-nonterm) ; NonTerm : Non-terminal that has just been produced
-  (from goto-from) ; StateName : Current state (after reduction)
-  (next goto-next)) ; StateName : Next state (to transition to)
-
-(define-record-discloser :goto
-  (lambda (o)
-    `(goto
-      ,(goto-nonterm o)
-      ,(goto-from o)
-      ,(goto-next o))))
+;; nonterm : Non-terminal that has just been produced
+;; from : Current state (after reduction)
+;; next : Next state (to transition to)
+(define-record-simple goto (nonterm from next)) 
 
 ;; A State is (make-state StateName [ListOf Shift] [ListOf Reduce] [ListOf Accept])
-(define-record-type state :state
-  (make-state name shifts reduces accepts)
-  state?
-  (name state-name)
-  (shifts state-shifts)
-  (reduces state-reduces)
-  (accepts state-accepts))
-
-(define-record-discloser :state
-  (lambda (o)
-    `(state
-      ,(state-name o)
-      ,(state-shifts o)
-      ,(state-reduces o)
-      ,(state-accepts o))))
+(define-record-simple state (name shifts reduces accepts))
 
 ;; A Rule is (make-rule RuleName NonTerm Nat SemAction)
-(define-record-type rule :rule
-  (make-rule name nonterm arity sem-action)
-  rule?
-  (name rule-name)
-  (nonterm rule-nonterm)
-  (arity rule-arity)
-  (sem-action rule-sem-action))
-
-(define-record-discloser :rule
-  (lambda (o)
-    `(rule
-      ,(rule-name o)
-      ,(rule-nonterm o)
-      ,(rule-arity o)
-      ,(rule-sem-action o))))
+(define-record-simple rule (name nonterm arity sem-action))
 
 ;; A PDA is (make-pda [Listof State] [Listof Goto] [Listof Rule] [Listof No-Shift] StateName)
-(define-record-type pda :pda
-  (make-pda states gotos rules noshifts start-state)
-  pda?
-  (states pda-states)
-  (gotos pda-gotos)
-  (rules pda-rules)
-  (noshifts pda-noshifts)
-  (start-state pda-start-state))
-
-(define-record-discloser :pda
-  (lambda (o)
-    `(pda
-      ,(pda-states o)
-      ,(pda-gotos o)
-      ,(pda-rules o)
-      ,(pda-noshifts o)
-      ,(pda-start-state o))))
+(define-record-simple pda (states gotos rules noshifts start-state))
 
 
 ;;; Equality and modification functions for AST items
@@ -380,7 +307,6 @@
 	     (gather-main rest states gotos (cons (apply make-rule data) rules) noshifts start))
 	    (else (error "Unrecognized PDA clause.")))))))
 
-
 (assert (sexp->PDA adder-PDA)
 	(make-PDA (list (make-state 's6
 				    '()
@@ -427,4 +353,4 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; This code converts a PDA term from its AST form into the corresponding sexp.
 
-;....
+; TODO?
