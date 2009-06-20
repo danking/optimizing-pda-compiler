@@ -36,8 +36,12 @@
 						  state))
 	(else (let* ((look (string-ref stream state)))
 		  (case char
-		    ((#\0 #\1 #\2 #\3 #\4 #\5 #\6 #\7 #\8 #\9) 'DIGIT)
-		    ((#\+) 'PLUS)
+		    ((#\0 #\1 #\2 #\3 #\4 #\5 #\6 #\7 #\8 #\9)
+		     (values 'DIGIT char (add1 LexState)))
+
+		    ((#\+)
+		     (values 'PLUS char (add1 LexState)))
+		    
 		    (else (error "Invalid character in input stream.")))))))
 
 ;; adder-parser : Source Number -> Number
@@ -113,7 +117,7 @@
        ; Accept and error states
        (accept (lambda (value)
 		 value)) ; kind of pointless
-       (error (lambda (stack lex-state)
+       (on-error (lambda (stack lex-state)
 		(error "Parsing failed."))) ; TODO: something interesting
        
        ; Goto lambdas: One for each non-terminal, pulled from states
