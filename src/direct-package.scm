@@ -3,6 +3,11 @@
 ;;; Main file.
 
 
+(define-structure direct-parser (export )
+  (open pp define-record-types srfi-8 srfi-23 ascii lalr scheme)
+
+  (begin
+  
 ;;; Loading instructions:
 ;;; ,open pp ; pretty-printing
 ;;; ,open define-record-types ; records
@@ -28,12 +33,13 @@
 	 (let ((act-val actual)
 	       (exp-val expected)
 	       (comp comparator))
-	   (if (comp act-val exp-val) #t
-	       (begin (display "Assertion failed. Expected:") (newline)
-		      (p exp-val)
-		      (display "Actual: ")
-		      (p act-val)
-		      #f))
+	   (or (comp act-val exp-val)
+	       (with-current-output-port (current-error-port)
+		 (display "Assertion failed. Expected:") (newline)
+		 (p exp-val)
+		 (display "Actual: ")
+		 (p act-val)
+		 #f))
 	 #t)))
     
     ;; assert : X X -> Boolean
@@ -61,25 +67,6 @@
 	   (display msg)
 	   (display ": ")
 	   (p val))))))
-
-
-;; list=? : [X X -> Boolean] [Listof X] [Listof X] -> Boolean
-;; to compare the contents of two lists using the given comparator
-(define (list=? comp l1 l2)
-  (cond
-   ((null? l1) (null? l2))
-   ((null? l2) #f)
-   (else (and (comp (car l1) (car l2))
-	      (list=? comp (cdr l1) (cdr l2))))))
-
-(assert (list=? = '() '()))
-(assert (list=? = '(1 2 3) '(1 2 3)))
-(assert (list=? = '(1 2 3) '(1 2 4))
-	#f)
-(assert (list=? = '(1 2 3) '(1 2 3 4))
-	#f)
-(assert (list=? = '(1 2 3 4) '(1 2 3))
-	#f)
 
 
 ;; define-record-simple : 'Name ('Field ...) -> Void
@@ -135,9 +122,9 @@
     (ERROR *ERROR*)
     (NO-SHIFT *EOF*)
     (RULE r1 *start 2 #f)
-    (RULE r2 exp 3 ,adder-exp)
-    (RULE r3 num 2 ,adder-num)
-    (RULE r4 num 0 ,adder-0)
+    (RULE r2 exp 3 (lambda (num1 PLUS num2) (+ num1 num2)))
+    (RULE r3 num 2 adder-num)
+    (RULE r4 num 0 adder-0)
     (STATE s0
 	   (REDUCE () r4)
 	   (GOTO exp s1)
@@ -158,3 +145,5 @@
 	   (REDUCE (*EOF*) r2))
     (STATE s6
 	   (REDUCE () r1))))
+
+))
