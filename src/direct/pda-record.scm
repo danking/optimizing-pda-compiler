@@ -30,25 +30,45 @@
 ;;; No-Shift = Symbol
 
 ;; A Shift is (make-shift [ListOf Token] StateName)
-(define-record-simple shift (lookaheads next-state))
+(define-record shift
+  lookaheads
+  next-state)
 
 ;; A Reduce is (make-reduce [ListOf Token] RuleName)
-(define-record-simple reduce (lookaheads rule-name))
+(define-record reduce
+  lookaheads
+  rule-name)
 
 ;; A Goto is (make-goto NonTerm StateName StateName)
 ;; nonterm : Non-terminal that has just been produced
 ;; from : Current state (after reduction)
 ;; next : Next state (to transition to)
-(define-record-simple goto (nonterm from next)) 
+(define-record goto
+  nonterm
+  from
+  next) 
 
 ;; A State is (make-state StateName [ListOf Shift] [ListOf Reduce] [ListOf Accept])
-(define-record-simple state (name shifts reduces accepts))
+(define-record state
+  name
+  shifts
+  reduces
+  accepts)
 
 ;; A Rule is (make-rule RuleName NonTerm Nat SemAction)
-(define-record-simple rule (name nonterm arity sem-action))
+(define-record rule
+  name
+  nonterm
+  arity
+  sem-action)
 
 ;; A PDA is (make-pda [Listof State] [Listof Goto] [Listof Rule] [Listof No-Shift] StateName)
-(define-record-simple pda (states gotos rules noshifts start-state))
+(define-record pda
+  states
+  gotos
+  rules
+  noshifts
+  start-state)
 
 
 ;;; Equality and modification functions for AST items
@@ -57,8 +77,8 @@
 ;; shift= : Shift Shift -> Boolean
 ;; Compare two shift actions
 (define (shift= s1 s2)
-  (and (equal? (shift-lookaheads s1) (shift-lookaheads s2))
-       (eq?    (shift-next-state s1) (shift-next-state s2))))
+  (and (equal? (shift:lookaheads s1) (shift:lookaheads s2))
+       (eq?    (shift:next-state s1) (shift:next-state s2))))
 
 (assert (shift= (make-shift '(FOO BAR) 'S1)
 		(make-shift '(FOO BAR) 'S1)))
@@ -69,64 +89,68 @@
 		(make-shift '(BAR) 'S1))
 	#f)
 
-;; shift+tokens : Shift [Listof Token] -> Shift
-;; Adds Tokens to a Shift's lookaheads list.
-(define (shift+tokens s lot)
-  (make-shift (append lot (shift-lookaheads s))
-	      (shift-next-state s)))
-
-(assert (shift+tokens (make-shift '(FOO BAR) 'S1) '(QUX FEEP))
-	(make-shift '(QUX FEEP FOO BAR) 'S1)
-	shift=)
-
 ;; reduce= : Reduce Reduce -> Boolean
 ;; Compare two reduce actions
 (define (reduce= r1 r2)
-  (and (equal? (reduce-lookaheads r1) (reduce-lookaheads r2))
-       (eq?    (reduce-rule-name r1)  (reduce-rule-name r2))))
-
-;; reduce+tokens : Reduce [Listof Token] -> Reduce
-;; Adds Tokens to a Reduce's lookaheads list.
-(define (reduce+tokens r lot)
-  (make-reduce (append lot (reduce-lookaheads r))
-	       (reduce-rule-name r)))
-
-(assert (reduce+tokens (make-reduce '(FOO BAR) 'R1) '(QUX FEEP))
-	(make-reduce '(QUX FEEP FOO BAR) 'R1)
-	reduce=)
+  (and (equal? (reduce:lookaheads r1) (reduce:lookaheads r2))
+       (eq?    (reduce:rule-name r1)  (reduce:rule-name r2))))
 
 ;; goto= : Goto Goto -> Boolean
 ;; Returns true if the arguments are equal Gotos
 (define (goto= g1 g2)
-  (and (eq? (goto-nonterm g1) (goto-nonterm g2))
-       (eq? (goto-from g1)    (goto-from g2))
-       (eq? (goto-next g1)    (goto-next g2))))
+  (and (eq? (goto:nonterm g1) (goto:nonterm g2))
+       (eq? (goto:from g1)    (goto:from g2))
+       (eq? (goto:next g1)    (goto:next g2))))
 
 ;;state= : State State -> Boolean
 ;;Returns true if the two inputs are equal.
 (define (state= s1 s2)
-  (and (eq?            (state-name s1)    (state-name s2))
-       (list=? shift=  (state-shifts s1)  (state-shifts s2))
-       (list=? reduce= (state-reduces s1) (state-reduces s2))
-       (list=? eq?     (state-accepts s1) (state-accepts s2))))
+  (and (eq?           (state:name s1)    (state:name s2))
+       (list= shift=  (state:shifts s1)  (state:shifts s2))
+       (list= reduce= (state:reduces s1) (state:reduces s2))
+       (list= eq?     (state:accepts s1) (state:accepts s2))))
 
 ;; rule= : Rule Rule -> Boolean
 ;; Returns true if the two inputs are equal Rules
 ;; (with the exception of semantic actions)
 (define (rule= r1 r2)
-  (and (eq? (rule-name r1)    (rule-name r2))
-       (eq? (rule-nonterm r1) (rule-nonterm r2))
-       (=   (rule-arity r1)   (rule-arity r2))))
-
+  (and (eq? (rule:name r1)    (rule:name r2))
+       (eq? (rule:nonterm r1) (rule:nonterm r2))
+       (=   (rule:arity r1)   (rule:arity r2))))
 
 ;;pda= : PDA PDA -> Boolean
 ;;Returns true if the two inputs are equal PDAs
 (define (pda= p1 p2)
-  (and (list=? state= (pda-states p1)      (pda-states p2))
-       (list=? goto=  (pda-gotos p1)       (pda-gotos p2))
-       (list=? rule=  (pda-rules p1)       (pda-rules p2))
-       (equal?        (pda-noshifts p1)    (pda-noshifts p2))
-       (eq?           (pda-start-state p1) (pda-start-state p2))))
+  (and (list= state= (pda:states p1)      (pda:states p2))
+       (list= goto=  (pda:gotos p1)       (pda:gotos p2))
+       (list= rule=  (pda:rules p1)       (pda:rules p2))
+       (equal?       (pda:noshifts p1)    (pda:noshifts p2))
+       (eq?          (pda:start-state p1) (pda:start-state p2))))
+
+
+;;; Equality and modification functions for AST items
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; shift+tokens : Shift [Listof Token] -> Shift
+;; Adds Tokens to a Shift's lookaheads list.
+(define (shift+tokens s lot)
+  (make-shift (append lot (shift:lookaheads s))
+	      (shift:next-state s)))
+
+(assert (shift+tokens (make-shift '(FOO BAR) 'S1) '(QUX FEEP))
+	(make-shift '(QUX FEEP FOO BAR) 'S1)
+	shift=)
+
+;; reduce+tokens : Reduce [Listof Token] -> Reduce
+;; Adds Tokens to a Reduce's lookaheads list.
+(define (reduce+tokens r ts)
+  (make-reduce (append ts (reduce:lookaheads r))
+	       (reduce:rule-name r)))
+
+(assert (reduce+tokens (make-reduce '(FOO BAR) 'R1) '(QUX FEEP))
+	(make-reduce '(QUX FEEP FOO BAR) 'R1)
+	reduce=)
+
 
 ;;; Sexp->AST PDA parser
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -175,7 +199,7 @@
 	  (loop todo
 		(update-or-add accum
 			       (lambda (cur)
-				 (eq? (shift-next-state cur) destination))
+				 (eq? (shift:next-state cur) destination))
 			       (lambda (cur)
 				 (shift+tokens cur lookahead))
 			       (make-shift lookahead destination)))))))
@@ -186,7 +210,7 @@
 	(list (make-shift '(c d a) 'z)
 	      (make-shift '(b) 'y))
 	(lambda (sl1 sl2)
-	  (list=? shift= sl1 sl2)))
+	  (list= shift= sl1 sl2)))
 
 ;; build-reduces : [Listof ([Listof Token] RuleName)] -> [Listof Reduce]
 ;; Collapse a list of lookahead/rulename pairs into a list of Reduce.
@@ -203,7 +227,7 @@
 	  (loop todo
 		(update-or-add accum
 			       (lambda (cur)
-				 (eq? (reduce-rule-name cur) rule-name))
+				 (eq? (reduce:rule-name cur) rule-name))
 			       (lambda (cur)
 				 (reduce+tokens cur lookahead))
 			       (make-reduce lookahead rule-name)))))))
@@ -214,7 +238,7 @@
 	(list (make-reduce '(c d a) 'z)
 	      (make-reduce '(b) 'y))
 	(lambda (rl1 rl2)
-	  (list=? reduce= rl1 rl2)))
+	  (list= reduce= rl1 rl2)))
 
 ;; parse-state-sexp : State-Sexp -> (values State [Listof Goto])
 ;; Read a state sexp (without STATE prolog) into a State and a list of Goto.
@@ -271,7 +295,7 @@
 		   (list (make-goto 'num 'S1 'S7)
 			 (make-goto 'exp 'S1 'S5))
 		   (lambda (gl1 gl2)
-		     (list=? goto= gl1 gl2)))))
+		     (list= goto= gl1 gl2)))))
 
 ;; sexp->PDA : PDA-Sexp -> PDA
 (define (sexp->PDA form)
@@ -308,7 +332,7 @@
 	    (else (error "Unrecognized PDA clause.")))))))
 
 (assert (sexp->PDA adder-PDA)
-	(make-PDA (list (make-state 's6
+	(make-pda (list (make-state 's6
 				    '()
 				    (list (make-reduce '() 'r1))
 				    '())
@@ -340,9 +364,14 @@
 		  (list (make-goto 'num 's4 's5)
 			(make-goto 'num 's0 's2)
 			(make-goto 'exp 's0 's1))
-		  (list (make-rule 'r4 'num 0 adder-0)
-			(make-rule 'r3 'num 2 adder-num)
-			(make-rule 'r2 'exp 3 adder-exp)
+		  (list (make-rule 'r4 'num 0 (lambda ()
+						0))
+			(make-rule 'r3 'num 2 (lambda (num-1 PLUS num-2)
+						(+ num-1 num-2)))
+			(make-rule 'r2 'exp 3 (lambda (num DIGIT)
+						(+ (* num 10)
+						   (- (char->ascii DIGIT)
+						      (char->ascii #\0)))))
 			(make-rule 'r1 '*start 2 #f))
 		  '(*EOF*)
 		  's0)
@@ -354,3 +383,4 @@
 ;;; This code converts a PDA term from its AST form into the corresponding sexp.
 
 ; TODO?
+
