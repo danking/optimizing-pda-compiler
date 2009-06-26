@@ -254,9 +254,9 @@
 		 (accepts '()))
       (if (null? remain)
 	  (values (make-state name
-			      (build-shifts shift-clauses)
-			      (build-reduces reduce-clauses)
-			      accepts)
+			      (reverse (build-shifts shift-clauses))
+			      (reverse (build-reduces reduce-clauses))
+			      (reverse accepts))
 		  gotos)
 	  (let* ((top (car remain))
 		 (rest (cdr remain))
@@ -308,7 +308,7 @@
 		    (noshifts '())
 		    (start #f))
     (if (null? remain)
-	(make-pda states gotos rules noshifts start)
+	(make-pda (reverse states) (reverse gotos) (reverse rules) (reverse noshifts) start)
 	(let* ((top  (car remain))
 	       (rest (cdr remain))
 	       (type (car top))
@@ -331,56 +331,118 @@
 	     (gather-main rest states gotos (cons (apply make-rule data) rules) noshifts start))
 	    (else (error "Unrecognized PDA clause.")))))))
 
-(assert (sexp->PDA adder-PDA)
-	(make-pda (list (make-state 's6
-				    '()
-				    (list (make-reduce '() 'r1))
-				    '())
-			(make-state 's5
-				    (list (make-shift '(DIGIT) 's3))
-				    (list (make-reduce '(*EOF*) 'r2))
-				    '())
-			(make-state 's4
+(define adder-PDA-record
+  	(make-pda (list (make-state 's0
 				    '()
 				    (list (make-reduce '() 'r4))
-				    '())
-			(make-state 's3
-				    '()
-				    (list (make-reduce '() 'r3))
-				    '())
-			(make-state 's2
-				    (list (make-shift '(PLUS) 's4)
-					  (make-shift '(DIGIT) 's3))
-				    '()
 				    '())
 			(make-state 's1
 				    '()
 				    '()
 				    '(*EOF*))
-			(make-state 's0
+			(make-state 's2
+				    (list (make-shift '(DIGIT) 's3)
+					  (make-shift '(PLUS) 's4))
+				    '()
+				    '())
+			(make-state 's3
+				    '()
+				    (list (make-reduce '() 'r3))
+				    '())
+			(make-state 's4
 				    '()
 				    (list (make-reduce '() 'r4))
+				    '())
+			(make-state 's5
+				    (list (make-shift '(DIGIT) 's3))
+				    (list (make-reduce '(*EOF*) 'r2))
+				    '())
+			(make-state 's6
+				    '()
+				    (list (make-reduce '() 'r1))
 				    '()))
-		  (list (make-goto 'num 's4 's5)
+		  (list (make-goto 'exp 's0 's1)
 			(make-goto 'num 's0 's2)
-			(make-goto 'exp 's0 's1))
-		  (list (make-rule 'r4 'num 0 (lambda ()
-						0))
-			(make-rule 'r3 'num 2 (lambda (num-1 PLUS num-2)
+			(make-goto 'num 's4 's5))
+		  (list (make-rule 'r1 '*start 2 #f)
+			(make-rule 'r2 'exp 3 '(lambda (num-1 PLUS num-2)
 						(+ num-1 num-2)))
-			(make-rule 'r2 'exp 3 (lambda (num DIGIT)
+			(make-rule 'r3 'num 2 '(lambda (num DIGIT)
 						(+ (* num 10)
 						   (- (char->ascii DIGIT)
 						      (char->ascii #\0)))))
-			(make-rule 'r1 '*start 2 #f))
+			
+			(make-rule 'r4 'num 0 '(lambda ()
+						0)))
 		  '(*EOF*)
-		  's0)
-	pda=)
+		  's0))
 
+(assert (sexp->PDA adder-PDA)
+	adder-PDA-record
+	pda=)
 
 ;;; AST->Sexp PDA unparser
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; This code converts a PDA term from its AST form into the corresponding sexp.
 
-; TODO?
+(define (PDA->sexp pda)
+  (append (list (cons 'NO-SHIFT (pda:noshifts pda)))
+	  (map (lambda (rule)
+		 `(RULE ,(rule:name rule) 
+			,(rule:nonterm rule) 
+			,(rule:arity rule)
+			,(rule:sem-action rule)))
+	       (pda:rules pda))
+	  (map (lambda (state)
+		 `(STATE ,(state:name state)
+			 ,(append (map (lambda (shift)
+					 `(SHIFT ,(shift:lookaheads shift)
+						 ,(shift:next-state shift)))
+				       (state:shifts state))
+				   (map (lambda (reduce)
+					  `(REDUCE ,(reduce:lookaheads reduce)
+						   ,(reduce:rule-name reduce)))
+					(state:reduces state))
+			  	   (map (lambda (goto)
+					  `(GOTO ,(goto:nonterm goto)
+						 ,(goto:next goto)))
+					(filter (lambda (goto)
+						  (eq? (goto:from goto) 
+						       (state:name state)))
+						(pda:gotos pda)))
+				   (if (pair? (state:accepts state))
+				       (list `(ACCEPT ,(state:accepts state)))
+				       '()))))
+	       (pda:states pda))))
 
+
+(assert (PDA->sexp adder-PDA-record)
+	'((NO-SHIFT *EOF*)
+	  (RULE r1 *start 2 #f)
+	  (RULE r2 exp 3 (lambda (num-1 PLUS num-2)
+			   (+ num-1 num-2)))
+	  (RULE r3 num 2 (lambda (num DIGIT)
+			   (+ (* num 10) 
+			      (- (char->ascii DIGIT) 
+				 (char->ascii #\0)))))
+	  (RULE r4 num 0 (lambda () 0))
+	  (STATE s0
+		 ((REDUCE () r4)
+		 (GOTO exp s1)
+		 (GOTO num s2)))
+	  (STATE s1
+		 ((ACCEPT (*EOF*))))
+	  (STATE s2
+		 ((SHIFT (DIGIT) s3)
+		  (SHIFT (PLUS) s4)))
+	  (STATE s3
+		 ((REDUCE () r3)))
+	  (STATE s4
+		 ((REDUCE () r4)
+		 (GOTO num s5)))
+	  (STATE s5
+		 ((SHIFT (DIGIT) s3)
+		 (REDUCE (*EOF*) r2)))
+	  (STATE s6
+		((REDUCE () r1))))
+	equal?)
