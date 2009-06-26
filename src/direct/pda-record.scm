@@ -385,6 +385,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; This code converts a PDA term from its AST form into the corresponding sexp.
 
+;;PDA->sexp : PDA -> PDA-sexp
+;;Unparses a PDA record to a PDA S-expression
 (define (PDA->sexp pda)
   (append (list (cons 'NO-SHIFT (pda:noshifts pda)))
 	  (map (lambda (rule)
