@@ -448,3 +448,91 @@
 	  (STATE s6
 		((REDUCE () r1))))
 	equal?)
+
+;;; PDA Static Checker
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; This code checks the validity of the PDA
+
+(define (andmap fcn lst)
+  (cond
+   ((null? lst) #t)
+   (else (and (fcn (car lst))
+	      (andmap fcn (cdr lst))))))
+
+(define (ormap fcn lst)
+  (cond
+   ((null? lst) #f)
+   (else (or (fcn (car lst))
+	      (ormap fcn (cdr lst))))))
+
+;; duplicate-names : [List of X] (X -> Symbol) -> Boolean
+;; Checks whether there are duplicate names in the list
+(define (duplicate-names lst get-name)
+  (cond ((null? lst) #f)
+	(else (if (ormap (lambda (x) 
+			   (eq? (get-name x) (get-name (car lst))))
+			 (cdr lst))
+		  (error "Static Checker Error - Duplicate name " (get-name (car lst)))
+		  (duplicate-names (cdr lst) get-name)))))
+
+;; valid-gotos : [Listof Goto] [Listof State] [Listof Rules] -> Boolean
+;; Checks whether each Goto points to a valid state names or rule nontern
+(define (valid-gotos gotos states rules)
+  (andmap (lambda (goto)
+	    (if (and (ormap (lambda (state)
+			       (eq? (state:name state) (goto:from goto)))				  
+			     states)
+		     (ormap (lambda (state)
+			       (eq? (state:name state) (goto:next goto)))
+			     states)
+		     (ormap (lambda (rule)
+			       (eq? (goto:nonterm goto) (rule:nonterm rule)))
+			     rules))
+		#t
+		(error "Static Checker Error - Invalid Goto" goto)))
+	  gotos))
+
+;; valid-state-actions : [Listof State] [Listof Rule] -> Boolean
+;; Checks whether the shifts and reduces of a state contain valid
+;; state and rule names.
+(define (valid-state-actions states rules)
+  (andmap (lambda (state)
+	    (and (andmap (lambda (shift)
+			   (if (ormap (lambda (state)
+					(eq? (state:name state) (shift:next-state shift)))
+				      states)
+			       #t
+			       (error "Static Checker Error - Invalid Shift" shift)))
+			 (state:shifts state))
+		 (andmap (lambda (reduce)
+			   (if (ormap (lambda (rule)
+					(eq? (rule:name rule) (reduce:rule-name reduce)))
+				   rules)
+			       #t
+			       (error "Static Checker Error - Invalid Reduce" reduce)))
+			 (state:reduces state))))
+	  states))
+
+;; pda-static-check : PDA -> boolean
+;; Verifies that the PDA is valid by doing the following:
+;;    -- Ensuring there are no duplicate state or rule names
+;;    -- Ensuring that each state/rule pointer is valid
+;;       in all Gotos, Shifts, and reduces
+(define (pda-static-check pda)
+  (and (not (duplicate-names (pda:states pda) state:name))
+       (not (duplicate-names (pda:rules pda) rule:name))
+       (valid-gotos (pda:gotos pda) (pda:states pda) (pda:rules pda))
+       (valid-state-actions (pda:states pda) (pda:rules pda))
+       (if (ormap (lambda (state) 
+		    (eq? (state:name state) (pda:start-state pda)))
+		  (pda:states pda))
+	   #t
+	   (error "Invalid Start State" (pda:start-state pda))))
+
+(assert (pda-static-check adder-PDA-record))
+
+;; compile-pda : PDA-sexp -> PDA
+;; Parses the PDA S-expression and statically checks to ensure
+;; the PDA is valid.
+(define (compile-pda pda-sexp)
+   (pda-static-check (sexp->PDA pda-sexp)))
