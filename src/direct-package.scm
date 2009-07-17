@@ -11,7 +11,7 @@
   (files direct/debug))
 
 (define-structure direct-pda-record
-  (export sexp->PDA PDA->sexp)
+  (export sexp->PDA PDA->sexp pda-static-check compile-pda)
   (open scheme-with-scsh
 	srfi-1 ; list=
 	srfi-8 ; receive
