@@ -369,8 +369,7 @@
 						(+ num-1 num-2)))
 			(make-rule 'r3 'num 2 '(lambda (num DIGIT)
 						(+ (* num 10)
-						   (- (char->ascii DIGIT)
-						      (char->ascii #\0)))))
+						   DIGIT)))
 			
 			(make-rule 'r4 'num 0 '(lambda ()
 						0)))
@@ -425,8 +424,7 @@
 			   (+ num-1 num-2)))
 	  (RULE r3 num 2 (lambda (num DIGIT)
 			   (+ (* num 10) 
-			      (- (char->ascii DIGIT) 
-				 (char->ascii #\0)))))
+			      DIGIT)))
 	  (RULE r4 num 0 (lambda () 0))
 	  (STATE s0
 		 ((REDUCE () r4)
@@ -527,7 +525,7 @@
 		    (eq? (state:name state) (pda:start-state pda)))
 		  (pda:states pda))
 	   #t
-	   (error "Invalid Start State" (pda:start-state pda))))
+	   (error "Invalid Start State" (pda:start-state pda)))))
 
 (assert (pda-static-check adder-PDA-record))
 
@@ -535,4 +533,280 @@
 ;; Parses the PDA S-expression and statically checks to ensure
 ;; the PDA is valid.
 (define (compile-pda pda-sexp)
-   (pda-static-check (sexp->PDA pda-sexp)))
+  (let ((pda (sexp->PDA pda-sexp)))
+    (if (pda-static-check pda)
+	pda
+	(error "Compile Failed" pda-sexp))))
+
+
+;;; PDA -> Scheme Code
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; This code converts the PDA AST to scheme code that can run on input.
+
+;;; [Listof Token] -> Value
+(define (pda->code form rename compare)
+  (let (;(%letrec (rename letrec))
+        ;(%lambda (rename lambda))
+	)
+    `(letrec ,(append (fill-in-states (cadr form) rename)
+		       (fill-in-rules (cadddr form) rename)
+                       (fill-in-gotos (caddr form) rename)
+		       `((no-shifts (quote ,(cadddr (cdr form))))
+			 (applyfcn (lambda (fcn n stack)
+				     (letrec ((applyfcn (lambda (fcn n stack args)
+							  (cond ((zero? n) (cons (apply fcn args) stack))
+								(else (applyfcn fcn (- n 1) 
+										(cdr stack) 
+										(cons (car stack)
+										      args)))))))
+				     (applyfcn fcn n stack '())))))
+		       )
+              (lambda (input nxt-token) (s0 input '() nxt-token '())))))
+
+(define (fill-in-states states-lst rename)
+  (cond ((null? states-lst) '())
+	(else (cons (fill-in-one-state (car states-lst) rename)
+		    (fill-in-states (cdr states-lst) rename)))))
+
+(define (fill-in-one-state state rename)
+  (let (;(%lambda (rename lambda))
+	;(%let (rename let))
+	;(%cond (rename cond))
+	)
+    `(,(cadr state) (lambda (input stack nxt-token goto-env)
+			      (let ((token (nxt-token input)))
+				,(cons 'cond (append (fill-in-shifts  (caddr state) (cadr state) rename)  ;;%cond
+						     (fill-in-accepts (cadddr (cdr state)) rename)
+						     (fill-in-reduces (cadddr state) (cadr state) rename))))))))
+
+(define (fill-in-shifts shifts-lst state-name rename)
+  (cond ((null? shifts-lst) '())
+	(else (cons (fill-in-one-shift (car shifts-lst) state-name rename)
+		    (fill-in-shifts (cdr shifts-lst) state-name rename)))))
+
+(define (fill-in-one-shift shift state-name rename)
+  (let (;(%member (rename member))
+	;(%cdr (rename cdr))
+	;(%cons (rename cons))
+	;(%car (rename car))
+	;(%quote (rename quote))
+	)
+    `((member token (quote ,(cadr shift))) (if (member token no-shifts)
+					       (,(caddr shift) input
+						stack
+						nxt-token
+						(reeval-gotos goto-env (quote ,state-name)))
+					       (,(caddr shift) (cdr input)
+						(cons (car input) stack)
+						nxt-token
+						(reeval-gotos goto-env (quote ,state-name)))))))
+
+(define (fill-in-accepts accepts-lst rename)
+    (let (;(%member (rename member))
+	  ;(%quote (rename quote))
+	  )
+      (if (null? accepts-lst)
+	  '()
+	  `(((member token (quote ,accepts-lst)) stack)))))
+
+(define (fill-in-reduces reduces-lst state-name rename)
+  (cond ((null? reduces-lst) '())
+	((and (null? (cadar reduces-lst)) (not (null? (cdr reduces-lst))))
+	 (fill-in-reduces (append (cdr reduces-lst) (list (car reduces-lst))) state-name rename))
+	(else (cons (fill-in-one-reduce (car reduces-lst) state-name rename)
+		    (fill-in-reduces (cdr reduces-lst) state-name rename)))))
+
+(define (fill-in-one-reduce reduce state-name rename)
+  (let (;(%member (rename member))
+	;(%else (rename else))
+	;(%cdr (rename cdr))
+	;(%quote (rename quote))
+	)
+    (cond ((null? (cadr reduce)) `(else (,(caddr reduce) input stack nxt-token 
+					 (reeval-gotos goto-env (quote ,state-name)))))
+	  (else `((member token (quote ,(cadr reduce))) (if (member token no-shifts)
+							    (,(caddr reduce) input stack nxt-token
+							     (reeval-gotos goto-env (quote ,state-name)))
+							    (,(caddr reduce) (cdr input) stack nxt-token
+							     (reeval-gotos goto-env (quote ,state-name)))))))))
+
+(define (fill-in-rules rules-lst rename)
+  (cond ((null? rules-lst) '())
+	(else (cons (fill-in-one-rule (car rules-lst) rename)
+		    (fill-in-rules (cdr rules-lst) rename)))))
+
+(define (fill-in-one-rule rule rename)
+  (let (;(%lambda (rename lambda))
+	)
+    `(,(cadr rule) (lambda (input stack nxt-token goto-env)
+			     (run-goto input (applyfcn ,(cadddr (cdr rule))
+								       ,(cadddr rule)
+								       stack)
+			      nxt-token
+			      goto-env
+			      (quote ,(caddr rule)))))))
+
+(define (fill-in-gotos gotos rename)
+  (let ()
+    `((run-goto (lambda (input stack nxt-token goto-env nonterm) 
+		  (let ((next-state (cadar (filter (lambda (goto) (eq? (car goto) nonterm)) goto-env))))
+		    (next-state input stack nxt-token goto-env))))
+      (all-gotos ,(cons 'list (map (lambda (goto) 
+			 `(list (quote ,(cadr goto)) (quote ,(caddr goto)) ,(cadddr goto))) 
+		       gotos)))
+      (reeval-gotos (lambda (goto-env state-name)
+		      (let ((state-gotos (filter (lambda (goto) (eq? state-name (cadr goto))) all-gotos)))
+			(if (null? state-gotos)
+			    goto-env
+			    (reeval-all-state-gotos goto-env state-gotos)))))
+      (reeval-all-state-gotos (lambda (goto-env state-gotos)
+				(cond ((null? state-gotos) goto-env)
+				      (else (reeval-all-state-gotos (cons (list (caar state-gotos) (caddar state-gotos)) 
+                                                                             (filter (lambda (env-var) 
+										       (not (eq? (car env-var) 
+												 (caar state-gotos)))) goto-env))
+                                                                       (cdr state-gotos)))))))))
+
+(define adder-PDA-Sexp '(make-pda ((make-state s0
+				    ()
+				    ((make-reduce () r4))
+				    ())
+			(make-state s1
+				    ()
+				    ()
+				    (*EOF*))
+			(make-state s2
+				    ((make-shift (DIGIT) s3)
+					  (make-shift (PLUS) s4))
+				    ()
+				    ())
+			(make-state s3
+				    ()
+				    ((make-reduce () r3))
+				    ())
+			(make-state s4
+				    ()
+				    ((make-reduce () r4))
+				    ())
+			(make-state s5
+				    ((make-shift (DIGIT) s3))
+				    ((make-reduce (*EOF*) r2))
+				    ())
+			(make-state s6
+				    ()
+				    ((make-reduce () r1))
+				    ()))
+		  ((make-goto exp s0 s1)
+			(make-goto num s0 s2)
+			(make-goto num s4 s5))
+		  ((make-rule r1 *start 2 #f)
+			(make-rule r2 exp 3 (lambda (num-1 PLUS num-2)
+						(+ num-1 num-2)))
+			(make-rule r3 num 2 (lambda (num DIGIT)
+						(+ (* num 10)
+						   DIGIT)))
+			
+			(make-rule r4 num 0 (lambda ()
+						0)))
+		  (*EOF*)
+		  s0))
+
+;;; SIMPLE LEXER FOR ADDER GRAMMAR
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;
+
+(define (next-token input)                   
+  (cond ((null? input) '*EOF*)            
+	((eq? (first input) '+) 'PLUS)    
+	(else 'DIGIT)))
+
+
+
+
+;;; TEST
+;;;;
+
+(define new-adder-PDA '((TOKENS DIGIT PLUS *EOF*) 
+			(ERROR *ERROR*) 
+			(NO-SHIFT *EOF*) 
+			(RULE r1 *start 2 #f) 
+			(RULE r2 exp 3 (lambda (num PLUS exp) (+ num-1 num-2))) 
+			(RULE r3 exp 1 (lambda (num) num)) 
+			(RULE r4 num 2 (lambda (num DIGIT) (+ (* num 10) DIGIT))) 
+			(RULE r5 num 0 (lambda () 0)) 
+			(STATE s0 (COMMENT num "=>" ".") 
+			       (COMMENT num "=>" "." num DIGIT) 
+			       (COMMENT exp "=>" "." num) 
+			       (COMMENT exp "=>" "." num PLUS exp) 
+			       (COMMENT *start "=>" "." exp *EOF*) 
+			       (REDUCE () r5) 
+			       (GOTO exp s1) 
+			       (GOTO num s2)) 
+			(STATE s1 (COMMENT *start "=>" exp "." *EOF*) 
+			       (ACCEPT (*EOF*))) 
+			(STATE s2 (COMMENT num "=>" num "." DIGIT) 
+			       (COMMENT exp "=>" num ".") 
+			       (COMMENT exp "=>" num "." PLUS exp) 
+			       (SHIFT (DIGIT) s3) 
+			       (SHIFT (PLUS) s4) 
+			       (REDUCE (*EOF*) r3)) 
+			(STATE s3 (COMMENT num "=>" num DIGIT ".") 
+			       (REDUCE () r4)) 
+			(STATE s4 (COMMENT num "=>" ".") 
+			       (COMMENT num "=>" "." num DIGIT) 
+			       (COMMENT exp "=>" "." num) 
+			       (COMMENT exp "=>" num PLUS "." exp) 
+			       (COMMENT exp "=>" "." num PLUS exp) 
+			       (REDUCE () r5) 
+			       (GOTO exp s5) 
+			       (GOTO num s2)) 
+			(STATE s5 (COMMENT exp "=>" num PLUS exp ".") 
+			       (REDUCE () r2)) 
+			(STATE s6 (COMMENT *start "=>" exp *EOF* ".") 
+			       (REDUCE () r1))))
+
+(define new-adder-PDA-record (compile-pda new-adder-PDA))
+(define new-adder-PDA-Sexp '(make-pda ((make-state s0
+						   ()
+						   ((make-reduce () r5))
+						   ())
+				       (make-state s1
+						   ()
+						   ()
+						   (*EOF*))
+				       (make-state s2
+						   ((make-shift (DIGIT) s3)
+						    (make-shift (PLUS) s4))
+						   ((make-reduce (*EOF*) r3))
+						   ())
+				       (make-state s3
+						   ()
+						   ((make-reduce () r4))
+						   ())
+				       (make-state s4
+						   ()
+						   ((make-reduce () r5))
+						   ())
+				       (make-state s5
+						   ()
+						   ((make-reduce () r2))
+						   ())
+				       (make-state s6
+						   ()
+						   ((make-reduce () r1))
+						   ()))
+				       ((make-goto exp s0 s1)
+					(make-goto num s0 s2)
+					(make-goto exp s4 s5)
+					(make-goto num s4 s2))
+				       ((make-rule r1 *start 2 #f)
+					(make-rule r2 exp 3 (lambda (num-1 PLUS num-2)
+							      (+ num-1 num-2)))
+					(make-rule r3 exp 1 (lambda (num) num))
+					(make-rule r4 num 2 (lambda (num DIGIT)
+							      (+ (* num 10)
+								 DIGIT)))
+					(make-rule r5 num 0 (lambda ()
+							      0)))
+				       (*EOF*)
+				       s0))
