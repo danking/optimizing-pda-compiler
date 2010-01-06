@@ -543,6 +543,38 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; This code converts the PDA AST to scheme code that can run on input.
 
+;;; (make-state StateName [ListOf Shift] [ListOf Reduce] [ListOf Accept])
+;;;      -> (StateName (lambda (input stack nxt-token goto-env)
+;;;                      (cond [LISTOF shifts, reduces, accepts])))
+;;; (make-shift lookaheads StateName) 
+;;;      -> ((member token lookaheads) (if (member token no-shifts)
+;;;                                        (StateName input stack nxt-token 
+;;;                                                   (reeval goto-env (quote StateName)))
+;;;                                        (StateName (cdr input) (cons (car input) stack) 
+;;;                                                   nxt-token 
+;;;                                                   (reeval goto-env (quote StateName))))))
+;;; (make-reduce lookaheads RuleName)
+;;;    IF (null? lookaheads)
+;;;      -> (else (RuleName input stack nxt-token (reeval-gotos goto-env (quote StateName))))
+;;;              where StateName is the state this function call is in
+;;;    ELSE
+;;;      -> ((member token lookaheads) (if (member token no-shifts)
+;;;                                        (RuleName input stack nxt-token 
+;;;                                                  (reeval goto-env (quote StateName)))
+;;;                                        (RuleName (cdr input) (cons (car input) stack) 
+;;;                                                  nxt-token 
+;;;                                                  (reeval goto-env (quote StateName)))))
+;;;              where StateName is the state this function call is in
+;;; (make-rule RuleName NonTerm Nat SemAction)
+;;;      -> (RuleName (lambda (input stack nxt-token goto-env) 
+;;;                      (run-goto input (applyfcn (lambda (num-1 PLUS num-2) 
+;;;                                                   (+ num-1 num-2)) 
+;;;                                                3 stack) 
+;;;                                nxt-token goto-env NonTerm))) 
+;;; (make-pda [Listof State] [Listof Goto] [Listof Rule] [Listof No-Shift] StateName)
+;;;      -> (letrec ([LISTOF states, gotos, rules, no-shifts])
+;;;            (lambda (input nxt-token) (StateName input '() nxt-token '())))
+
 ;;; [Listof Token] -> Value
 (define (pda->code form rename compare)
   (let (;(%letrec (rename letrec))
@@ -563,11 +595,15 @@
 		       )
               (lambda (input nxt-token) (s0 input '() nxt-token '())))))
 
+;; fill-in-states : [Listof State] Renamer -> Sexp
+;; Handles all of the states into each functions
 (define (fill-in-states states-lst rename)
   (cond ((null? states-lst) '())
 	(else (cons (fill-in-one-state (car states-lst) rename)
 		    (fill-in-states (cdr states-lst) rename)))))
 
+;; fill-in-one-state : State Renamer -> Sexp
+;; Creates one function for the state specified
 (define (fill-in-one-state state rename)
   (let (;(%lambda (rename lambda))
 	;(%let (rename let))
@@ -579,11 +615,15 @@
 						     (fill-in-accepts (cadddr (cdr state)) rename)
 						     (fill-in-reduces (cadddr state) (cadr state) rename))))))))
 
+;; fill-in-shifts : [Listof Shift] StateName Renamer -> Sexp
+;; Creates the cond cause foreach case where a shift is created
 (define (fill-in-shifts shifts-lst state-name rename)
   (cond ((null? shifts-lst) '())
 	(else (cons (fill-in-one-shift (car shifts-lst) state-name rename)
 		    (fill-in-shifts (cdr shifts-lst) state-name rename)))))
 
+;; fill-in-one-shift : Shift StateName Renamer -> Sexp
+;; Creates the cond cause for the shift specified
 (define (fill-in-one-shift shift state-name rename)
   (let (;(%member (rename member))
 	;(%cdr (rename cdr))
@@ -600,7 +640,8 @@
 						(cons (car input) stack)
 						nxt-token
 						(reeval-gotos goto-env (quote ,state-name)))))))
-
+;; fill-in-accepts : [Listof Accept] Renamer -> Sexp
+;; Creates the cond clause if there is an accept case
 (define (fill-in-accepts accepts-lst rename)
     (let (;(%member (rename member))
 	  ;(%quote (rename quote))
@@ -609,6 +650,8 @@
 	  '()
 	  `(((member token (quote ,accepts-lst)) stack)))))
 
+;; fill-in-reduces : [Listof Reduce] StateName Renamer -> Sexp
+;; Creates each cond clause for every reduce case
 (define (fill-in-reduces reduces-lst state-name rename)
   (cond ((null? reduces-lst) '())
 	((and (null? (cadar reduces-lst)) (not (null? (cdr reduces-lst))))
@@ -616,6 +659,8 @@
 	(else (cons (fill-in-one-reduce (car reduces-lst) state-name rename)
 		    (fill-in-reduces (cdr reduces-lst) state-name rename)))))
 
+;; fill-in-one-reduce : Reduce StateName Renamer -> Sexp
+;; Creates a cond clause for the reduce case specified
 (define (fill-in-one-reduce reduce state-name rename)
   (let (;(%member (rename member))
 	;(%else (rename else))
@@ -630,11 +675,16 @@
 							    (,(caddr reduce) (cdr input) stack nxt-token
 							     (reeval-gotos goto-env (quote ,state-name)))))))))
 
+;; fill-in-rules : [Listof Rule] Renamer -> Sexp
+;; Creates a function for each rule
 (define (fill-in-rules rules-lst rename)
   (cond ((null? rules-lst) '())
 	(else (cons (fill-in-one-rule (car rules-lst) rename)
 		    (fill-in-rules (cdr rules-lst) rename)))))
 
+
+;; fill-in-one-rule : Rule Renamer -> Sexp
+;; Creates a function for the rule specified
 (define (fill-in-one-rule rule rename)
   (let (;(%lambda (rename lambda))
 	)
@@ -646,6 +696,8 @@
 			      goto-env
 			      (quote ,(caddr rule)))))))
 
+;; fill-in-gotos : [Listof Goto] Renamer -> Sexp
+;; Creates all of the functions associated in a goto case
 (define (fill-in-gotos gotos rename)
   (let ()
     `((run-goto (lambda (input stack nxt-token goto-env nonterm) 
@@ -666,6 +718,21 @@
 										       (not (eq? (car env-var) 
 												 (caar state-gotos)))) goto-env))
                                                                        (cdr state-gotos)))))))))
+
+
+;;; SIMPLE LEXER FOR ADDER GRAMMAR
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;
+
+(define (next-token input)                   
+  (cond ((null? input) '*EOF*)            
+	((eq? (first input) '+) 'PLUS)    
+	(else 'DIGIT)))
+
+
+;;; TEST
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;
 
 (define adder-PDA-Sexp '(make-pda ((make-state s0
 				    ()
@@ -711,20 +778,6 @@
 		  (*EOF*)
 		  s0))
 
-;;; SIMPLE LEXER FOR ADDER GRAMMAR
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;
-
-(define (next-token input)                   
-  (cond ((null? input) '*EOF*)            
-	((eq? (first input) '+) 'PLUS)    
-	(else 'DIGIT)))
-
-
-
-
-;;; TEST
-;;;;
 
 (define new-adder-PDA '((TOKENS DIGIT PLUS *EOF*) 
 			(ERROR *ERROR*) 
