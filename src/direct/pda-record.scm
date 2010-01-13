@@ -549,28 +549,26 @@
 ;;; (make-shift lookaheads StateName) 
 ;;;      -> ((member token lookaheads) (if (member token no-shifts)
 ;;;                                        (StateName input stack nxt-token 
-;;;                                                   (reeval goto-env (quote StateName)))
+;;;                                                   (cons (quote StateName) goto-env))
 ;;;                                        (StateName (cdr input) (cons (car input) stack) 
 ;;;                                                   nxt-token 
-;;;                                                   (reeval goto-env (quote StateName))))))
+;;;                                                   (cons (quote StateName) goto-env)))))
 ;;; (make-reduce lookaheads RuleName)
 ;;;    IF (null? lookaheads)
-;;;      -> (else (RuleName input stack nxt-token (reeval-gotos goto-env (quote StateName))))
+;;;      -> (else (RuleName input stack nxt-token (cons (quote StateName) goto-env)))
 ;;;              where StateName is the state this function call is in
 ;;;    ELSE
 ;;;      -> ((member token lookaheads) (if (member token no-shifts)
 ;;;                                        (RuleName input stack nxt-token 
-;;;                                                  (reeval goto-env (quote StateName)))
+;;;                                                  (cons (quote StateName) goto-env))
 ;;;                                        (RuleName (cdr input) (cons (car input) stack) 
 ;;;                                                  nxt-token 
-;;;                                                  (reeval goto-env (quote StateName)))))
+;;;                                                  (cons (quote StateName) goto-env))))
 ;;;              where StateName is the state this function call is in
 ;;; (make-rule RuleName NonTerm Nat SemAction)
 ;;;      -> (RuleName (lambda (input stack nxt-token goto-env) 
-;;;                      (run-goto input (applyfcn (lambda (num-1 PLUS num-2) 
-;;;                                                   (+ num-1 num-2)) 
-;;;                                                3 stack) 
-;;;                                nxt-token goto-env NonTerm))) 
+;;;                      (NonTerm input (applyfcn SemAction Nat) 
+;;;                                nxt-token (pop goto-env Nat)))) 
 ;;; (make-pda [Listof State] [Listof Goto] [Listof Rule] [Listof No-Shift] StateName)
 ;;;      -> (letrec ([LISTOF states, gotos, rules, no-shifts])
 ;;;            (lambda (input nxt-token) (StateName input '() nxt-token '())))
@@ -578,28 +576,38 @@
 
 ;;; [Listof Token] -> Value
 (define (pda->code form rename compare)
-  (let (;(%letrec (rename letrec))
-        ;(%lambda (rename lambda))
+  (let ((%letrec (rename 'letrec))
+        (%lambda (rename 'lambda))
+	(%error (rename 'error))
+	(%quote (rename 'quote))
+	(%cond (rename 'cond))
+	(%zero? (rename 'zero?))
+	(%cons (rename 'cons))
+	(%apply (rename 'apply))
+	(%else (rename 'else))
+	(%cdr (rename 'cdr))
+	(%car (rename 'car))
+	(%- (rename '-))
 	)
-    `(letrec ,(append (fill-in-states (cadr form) rename)
+    `(,%letrec ,(append (fill-in-states (cadr form) rename)
 		      (fill-in-rules (cadddr form) rename)
 		      (fill-in-gotos (caddr form) rename)
-		      `((*start (lambda (input stack nxt-token goto-env)
-				  (error "Invalid Expression")))
-			(no-shifts (quote ,(cadddr (cdr form))))
-			(applyfcn (lambda (fcn n stack)
-				    (letrec ((applyfcn (lambda (fcn n stack args)
-							 (cond ((zero? n) (cons (apply fcn args) stack))
-							       (else (applyfcn fcn (- n 1) 
-									       (cdr stack) 
-									       (cons (car stack)
-										     args)))))))
+		      `((*start (,%lambda (input stack nxt-token goto-env)
+				  (,%error "Invalid Expression")))
+			(no-shifts (,%quote ,(cadddr (cdr form))))
+			(applyfcn (,%lambda (fcn n stack)
+				    (,%letrec ((applyfcn (,%lambda (fcn n stack args)
+							   (,%cond ((,%zero? n) (,%cons (,%apply fcn args) stack))
+								   (,%else (applyfcn fcn (,%- n 1) 
+										 (,%cdr stack) 
+										 (,%cons (,%car stack)
+										       args)))))))
 				      (applyfcn fcn n stack '()))))
-			(pop (lambda (stack n) 
-			       (cond ((zero? n) stack) 
-				     (else (pop (cdr stack) (- n 1)))))))
+			(pop (,%lambda (stack n) 
+			       (,%cond ((,%zero? n) stack) 
+				     (,%else (pop (,%cdr stack) (,%- n 1)))))))
 		      )
-              (lambda (input nxt-token) (s0 input '() nxt-token '())))))
+              (,%lambda (input nxt-token) (,(cadddr (cddr form)) input '() nxt-token '())))))
 
 ;; fill-in-states : [Listof State] Renamer -> Sexp
 ;; Handles all of the states into each functions
@@ -611,13 +619,13 @@
 ;; fill-in-one-state : State Renamer -> Sexp
 ;; Creates one function for the state specified
 (define (fill-in-one-state state rename)
-  (let (;(%lambda (rename lambda))
-	;(%let (rename let))
-	;(%cond (rename cond))
+  (let ((%lambda (rename 'lambda))
+	(%let (rename 'let))
+	(%cond (rename 'cond))
 	)
-    `(,(cadr state) (lambda (input stack nxt-token goto-env)
-			      (let ((token (nxt-token input)))
-				,(cons 'cond (append (fill-in-shifts  (caddr state) (cadr state) rename)  ;;%cond
+    `(,(cadr state) (,%lambda (input stack nxt-token goto-env)
+			      (,%let ((token (nxt-token input)))
+				,(cons %cond (append (fill-in-shifts  (caddr state) (cadr state) rename)  ;;%cond
 						     (fill-in-accepts (cadddr (cdr state)) rename)
 						     (fill-in-reduces (cadddr state) (cadr state) rename))))))))
 
@@ -631,30 +639,30 @@
 ;; fill-in-one-shift : Shift StateName Renamer -> Sexp
 ;; Creates the cond cause for the shift specified
 (define (fill-in-one-shift shift state-name rename)
-  (let (;(%member (rename member))
-	;(%cdr (rename cdr))
-	;(%cons (rename cons))
-	;(%car (rename car))
-	;(%quote (rename quote))
+  (let ((%member (rename 'member))
+	(%cdr (rename 'cdr))
+	(%cons (rename 'cons))
+	(%car (rename 'car))
+	(%quote (rename 'quote))
 	)
-    `((member token (quote ,(cadr shift))) (if (member token no-shifts)
+    `((,%member token (,%quote ,(cadr shift))) (if (,%member token no-shifts)
 					       (,(caddr shift) input
 						stack
 						nxt-token
-						(cons (quote ,state-name) goto-env))
-					       (,(caddr shift) (cdr input)
-						(cons (car input) stack)
+						(,%cons (,%quote ,state-name) goto-env))
+					       (,(caddr shift) (,%cdr input)
+						(,%cons (,%car input) stack)
 						nxt-token
-						(cons (quote ,state-name) goto-env))))))
+						(,%cons (,%quote ,state-name) goto-env))))))
 ;; fill-in-accepts : [Listof Accept] Renamer -> Sexp
 ;; Creates the cond clause if there is an accept case
 (define (fill-in-accepts accepts-lst rename)
-    (let (;(%member (rename member))
-	  ;(%quote (rename quote))
+    (let ((%member (rename 'member))
+	  (%quote (rename 'quote))
 	  )
       (if (null? accepts-lst)
 	  '()
-	  `(((member token (quote ,accepts-lst)) stack)))))
+	  `(((,%member token (,%quote ,accepts-lst)) stack)))))
 
 ;; fill-in-reduces : [Listof Reduce] StateName Renamer -> Sexp
 ;; Creates each cond clause for every reduce case
@@ -668,18 +676,20 @@
 ;; fill-in-one-reduce : Reduce StateName Renamer -> Sexp
 ;; Creates a cond clause for the reduce case specified
 (define (fill-in-one-reduce reduce state-name rename)
-  (let (;(%member (rename member))
-	;(%else (rename else))
-	;(%cdr (rename cdr))
-	;(%quote (rename quote))
+  (let ((%member (rename 'member))
+	(%else (rename 'else))
+	(%cdr (rename 'cdr))
+	(%quote (rename 'quote))
+	(%else (rename 'else))
+	(%cons (rename 'cons))
 	)
-    (cond ((null? (cadr reduce)) `(else (,(caddr reduce) input stack nxt-token 
-					 (cons (quote ,state-name) goto-env))))
-	  (else `((member token (quote ,(cadr reduce))) (if (member token no-shifts)
+    (cond ((null? (cadr reduce)) `(,%else (,(caddr reduce) input stack nxt-token 
+					 (,%cons (,%quote ,state-name) goto-env))))
+	  (else `((,%member token (,%quote ,(cadr reduce))) (if (,%member token no-shifts)
 							    (,(caddr reduce) input stack nxt-token
-							     (cons (quote ,state-name) goto-env))
-							    (,(caddr reduce) (cdr input) stack nxt-token
-							     (cons (quote ,state-name) goto-env))))))))
+							     (,%cons (quote ,state-name) goto-env))
+							    (,(caddr reduce) (,%cdr input) stack nxt-token
+							     (,%cons (,%quote ,state-name) goto-env))))))))
 
 ;; fill-in-rules : [Listof Rule] Renamer -> Sexp
 ;; Creates a function for each rule
@@ -692,9 +702,9 @@
 ;; fill-in-one-rule : Rule Renamer -> Sexp
 ;; Creates a function for the rule specified
 (define (fill-in-one-rule rule rename)
-  (let (;(%lambda (rename lambda))
+  (let ((%lambda (rename 'lambda))
 	)
-    `(,(cadr rule) (lambda (input stack nxt-token goto-env)
+    `(,(cadr rule) (,%lambda (input stack nxt-token goto-env)
 			     (,(caddr rule) input (applyfcn ,(cadddr (cdr rule))
 								       ,(cadddr rule)
 								       stack)
@@ -704,9 +714,15 @@
 ;; fill-in-gotos : [Listof Goto] Renamer -> Sexp
 ;; Creates all of the functions associated in a goto case
 (define (fill-in-gotos gotos rename)
-  (letrec ((all-nonterms (consolidate gotos '())))
-    (map fill-in-nonterm all-nonterms)))
+  (letrec ((all-nonterms (consolidate gotos '()))
+	   (fill-in-nonterms (lambda (nonterms)
+			       (cond ((null? nonterms) '())
+				     (else (cons (fill-in-nonterm (car nonterms) rename)
+						 (fill-in-nonterms (cdr nonterms))))))))
+    (fill-in-nonterms all-nonterms)))
 
+;; consolidate : [Listof Goto] [Listof NonTerm] -> [Listof Nonterm]
+;; Creates a list of unique nonterms paired with all their goto mappings
 (define (consolidate gotos nonterms)
   (cond ((null? gotos) nonterms)
 	(else (let ((any-nonterms (filter (lambda (nonterm) (eq? (car nonterm) (cadar gotos))) nonterms)))
@@ -718,14 +734,28 @@
 								    (not (eq? (car nonterm) (cadar gotos)))) 
 								  nonterms))))))))
 
-(define (fill-in-nonterm nonterm)
-  (letrec ((fill-in-cases (lambda (nonterm-cases)
+;; fill-in-nonterm : NonTerm Renamer -> Sexp
+;; Creates each nonterminals' function to handle the goto case (see inverted sided gotos)
+(define (fill-in-nonterm nonterm rename)
+  (letrec ((%eq? (rename 'eq?))
+	   (%car (rename 'car))
+	   (%quote (rename 'quote))
+	   (%lambda (rename 'lambda))
+	   (%cond (rename 'cond))
+	   
+	   (fill-in-cases (lambda (nonterm-cases)
 			    (cond ((null? nonterm-cases) '())
-				  (else (cons `((eq? (car goto-env) (quote ,(caar nonterm-cases)))
+				  (else (cons `((,%eq? (,%car goto-env) (,%quote ,(caar nonterm-cases)))
 						(,(cadar nonterm-cases) input stack nxt-token goto-env))
 					      (fill-in-cases (cdr nonterm-cases))))))))
-    `(,(car nonterm) (lambda (input stack nxt-token goto-env)
-		       ,(cons 'cond (fill-in-cases (cadr nonterm)))))))
+    `(,(car nonterm) (,%lambda (input stack nxt-token goto-env)
+		       ,(cons %cond (fill-in-cases (cadr nonterm)))))))
+
+
+;; For the macro
+(define pda->code-int (lambda (form rename compare)
+			(let ((%quote (rename 'quote)))
+			  `(compile-pda-record-to-code (,%quote ,(compile-pda (cadr form)))))))
 
 
 ;;; SIMPLE LEXER FOR ADDER GRAMMAR

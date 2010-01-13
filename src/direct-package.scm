@@ -5,8 +5,7 @@
 (define-structure direct-debug
   (export (assert :syntax)
 	  (debug :syntax)
-	  adder-PDA
-	  test-PDA)
+	  adder-PDA)
   (open scheme-with-scsh
 	pp)
   (files direct/debug))
@@ -16,7 +15,8 @@
 	  PDA->sexp 
 	  pda-static-check 
 	  compile-pda 
-	  pda->code 
+	  pda->code
+	  pda->code-int
 	  adder-PDA-Sexp 
 	  adder-PDA-record 
 	  new-adder-PDA-record 
@@ -30,3 +30,13 @@
 	ascii)
   (files direct/pda-record)
 )
+
+(define-structure direct-pda-compiler
+  (export (compile-pda-to-code :syntax)
+	  (compile-pda-record-to-code :syntax))
+  (open list-lib scheme-with-scsh)
+  (for-syntax (open direct-pda-record))  
+  (begin
+    (define-syntax compile-pda-record-to-code pda->code)
+    (define-syntax compile-pda-to-code pda->code-int)
+))
