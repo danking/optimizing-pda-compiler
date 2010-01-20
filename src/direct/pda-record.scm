@@ -129,6 +129,7 @@
 
 ;;; Adder PDA Test
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Initial, really simple example -- adding (exactly) two numbers.
 ;;; (define adder
 ;;;   (compile+convert-to-pda
 ;;;    ((tokens DIGIT
@@ -142,6 +143,7 @@
 ;;; 	      (=> ()               0))
 ;;;     )))
 
+;;; This is the PDA term produced by the LALR CFG->PDA compiler.
 (define adder-PDA
   '((TOKENS DIGIT PLUS *EOF*) 
     (ERROR *ERROR*) 
@@ -171,6 +173,7 @@
 	   (REDUCE () r1)))
 )
 
+;;; This is the AST form for the PDA above.
 (define adder-PDA-record
   	(make-pda (list (make-state 's0
 				    '()
@@ -265,7 +268,7 @@
 
 ;; shift+tokens : Shift [Listof Token] -> Shift
 ;; Adds Tokens to a Shift's lookaheads list.
-(define (shift+tokens s lot)
+(define (shift+tokens s lot)	; LOT -> TOKS or TOKENS
   (make-shift (append lot (shift:lookaheads s))
 	      (shift:next-state s)))
 
@@ -538,8 +541,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; This code checks the validity of the PDA
 
-(define (andmap fcn lst)
-  (cond
+(define (andmap fcn lst) ; unneeded -- check out srfi-1 for ANY & EVERY.
+  (cond			 ; srfi-1 is package list-lib in scsh/s48.
    ((null? lst) #t)
    (else (and (fcn (car lst))
 	      (andmap fcn (cdr lst))))))
@@ -552,6 +555,7 @@
 
 ;; duplicate-names : [List of X] (X -> Symbol) -> Boolean
 ;; Checks whether there are duplicate names in the list
+;; >>> see srfi-1 for duplicate checkers.
 (define (duplicate-names lst get-name)
   (cond ((null? lst) #f)
 	(else (if (ormap (lambda (x) 
