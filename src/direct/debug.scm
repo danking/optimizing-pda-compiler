@@ -49,32 +49,3 @@
 	   (display msg)
 	   (display ": ")
 	   (p val))))))
-
-(define adder-PDA
-  '((TOKENS DIGIT PLUS *EOF*) 
-    (ERROR *ERROR*) 
-    (NO-SHIFT *EOF*) 
-    (RULE r1 *start 2 #f) 
-    (RULE r2 exp 3 (lambda (num-1 PLUS num-2) (+ num-1 num-2))) 
-    (RULE r3 num 2 (lambda (num DIGIT) (+ (* num 10) DIGIT))) 
-    (RULE r4 num 0 (lambda () 0)) 
-    (STATE s0
-	   (REDUCE () r4) 
-	   (GOTO exp s1) 
-	   (GOTO num s2)) 
-    (STATE s1 
-	   (ACCEPT (*EOF*))) 
-    (STATE s2 
-	   (SHIFT (DIGIT) s3) 
-	   (SHIFT (PLUS) s4)) 
-    (STATE s3 
-	   (REDUCE () r3)) 
-    (STATE s4 
-	   (REDUCE () r4) 
-	   (GOTO num s5)) 
-    (STATE s5 
-	   (SHIFT (DIGIT) s3) 
-	   (REDUCE (*EOF*) r2)) 
-    (STATE s6 
-	   (REDUCE () r1)))
-)

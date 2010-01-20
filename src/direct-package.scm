@@ -4,8 +4,7 @@
 
 (define-structure direct-debug
   (export (assert :syntax)
-	  (debug :syntax)
-	  adder-PDA)
+	  (debug :syntax))
   (open scheme-with-scsh
 	pp)
   (files direct/debug))
@@ -15,12 +14,17 @@
 	  PDA->sexp 
 	  pda-static-check 
 	  compile-pda 
-	  pda->code
-	  pda->code-int
-	  adder-PDA-Sexp 
-	  adder-PDA-record 
+	  ast->code
+	  adder-PDA
+	  adder-PDA-record
+	  adder-PDA-Sexp
+	  new-adder-PDA
 	  new-adder-PDA-record 
-	  new-adder-PDA-Sexp)
+	  new-adder-PDA-Sexp
+	  number-test
+	  next-token
+	  pda->ast->code
+	  )
   (open scheme-with-scsh
 	srfi-1 ; list=
 	srfi-8 ; receive
@@ -37,6 +41,6 @@
   (open list-lib scheme-with-scsh)
   (for-syntax (open direct-pda-record))  
   (begin
-    (define-syntax compile-pda-record-to-code pda->code)
-    (define-syntax compile-pda-to-code pda->code-int)
-))
+    (define-syntax compile-pda-to-code pda->ast->code)
+    (define-syntax compile-pda-record-to-code ast->code))
+)

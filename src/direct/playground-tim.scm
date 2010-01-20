@@ -47,7 +47,7 @@
 	    (error *ERROR*)
 	    (eos *EOF*))
     (non-term exp
-	      (=> (num PLUS exp)   (+ num-1 num-2))
+	      (=> (num PLUS exp)   (+ num exp))
 	      (=> (num)            num))
     (non-term num
 	      (=> (num DIGIT)      (+ (* num 10)
