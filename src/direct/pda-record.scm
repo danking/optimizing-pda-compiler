@@ -219,57 +219,13 @@
 		  '(*EOF*)
 		  's0))
 
-(define adder-PDA-Sexp '(make-pda ((make-state s0
-				    ()
-				    ((make-reduce () r4))
-				    ())
-			(make-state s1
-				    ()
-				    ()
-				    (*EOF*))
-			(make-state s2
-				    ((make-shift (DIGIT) s3)
-					  (make-shift (PLUS) s4))
-				    ()
-				    ())
-			(make-state s3
-				    ()
-				    ((make-reduce () r3))
-				    ())
-			(make-state s4
-				    ()
-				    ((make-reduce () r4))
-				    ())
-			(make-state s5
-				    ((make-shift (DIGIT) s3))
-				    ((make-reduce (*EOF*) r2))
-				    ())
-			(make-state s6
-				    ()
-				    ((make-reduce () r1))
-				    ()))
-		  ((make-goto exp s0 s1)
-		   (make-goto num s0 s2)
-		   (make-goto num s4 s5))
-		  ((make-rule r1 *start 2 #f)
-		   (make-rule r2 exp 3 (lambda (num-1 PLUS num-2)
-					 (+ num-1 num-2)))
-		   (make-rule r3 num 2 (lambda (num DIGIT)
-					 (+ (* num 10)
-					    DIGIT)))
-		   
-		   (make-rule r4 num 0 (lambda ()
-					 0)))
-		  (*EOF*)
-		  s0))
-
 ;;; Equality and modification functions for AST items
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; shift+tokens : Shift [Listof Token] -> Shift
 ;; Adds Tokens to a Shift's lookaheads list.
-(define (shift+tokens s lot)	; LOT -> TOKS or TOKENS
-  (make-shift (append lot (shift:lookaheads s))
+(define (shift+tokens s tokens)
+  (make-shift (append tokens (shift:lookaheads s))
 	      (shift:next-state s)))
 
 (assert (shift+tokens (make-shift '(FOO BAR) 'S1) '(QUX FEEP))
@@ -278,8 +234,8 @@
 
 ;; reduce+tokens : Reduce [Listof Token] -> Reduce
 ;; Adds Tokens to a Reduce's lookaheads list.
-(define (reduce+tokens r ts)
-  (make-reduce (append ts (reduce:lookaheads r))
+(define (reduce+tokens r tokens)
+  (make-reduce (append tokens (reduce:lookaheads r))
 	       (reduce:rule-name r)))
 
 (assert (reduce+tokens (make-reduce '(FOO BAR) 'R1) '(QUX FEEP))
@@ -541,24 +497,12 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; This code checks the validity of the PDA
 
-(define (andmap fcn lst) ; unneeded -- check out srfi-1 for ANY & EVERY.
-  (cond			 ; srfi-1 is package list-lib in scsh/s48.
-   ((null? lst) #t)
-   (else (and (fcn (car lst))
-	      (andmap fcn (cdr lst))))))
-
-(define (ormap fcn lst)
-  (cond
-   ((null? lst) #f)
-   (else (or (fcn (car lst))
-	      (ormap fcn (cdr lst))))))
-
 ;; duplicate-names : [List of X] (X -> Symbol) -> Boolean
 ;; Checks whether there are duplicate names in the list
 ;; >>> see srfi-1 for duplicate checkers.
 (define (duplicate-names lst get-name)
   (cond ((null? lst) #f)
-	(else (if (ormap (lambda (x) 
+	(else (if (any (lambda (x) 
 			   (eq? (get-name x) (get-name (car lst))))
 			 (cdr lst))
 		  (error "Static Checker Error - Duplicate name " (get-name (car lst)))
@@ -567,14 +511,14 @@
 ;; valid-gotos : [Listof Goto] [Listof State] [Listof Rules] -> Boolean
 ;; Checks whether each Goto points to a valid state names or rule nontern
 (define (valid-gotos gotos states rules)
-  (andmap (lambda (goto)
-	    (if (and (ormap (lambda (state)
+  (every (lambda (goto)
+	    (if (and (any (lambda (state)
 			       (eq? (state:name state) (goto:from goto)))				  
 			     states)
-		     (ormap (lambda (state)
+		     (any (lambda (state)
 			       (eq? (state:name state) (goto:next goto)))
 			     states)
-		     (ormap (lambda (rule)
+		     (any (lambda (rule)
 			       (eq? (goto:nonterm goto) (rule:nonterm rule)))
 			     rules))
 		#t
@@ -585,16 +529,16 @@
 ;; Checks whether the shifts and reduces of a state contain valid
 ;; state and rule names.
 (define (valid-state-actions states rules)
-  (andmap (lambda (state)
-	    (and (andmap (lambda (shift)
-			   (if (ormap (lambda (state)
+  (every (lambda (state)
+	    (and (every (lambda (shift)
+			   (if (any (lambda (state)
 					(eq? (state:name state) (shift:next-state shift)))
 				      states)
 			       #t
 			       (error "Static Checker Error - Invalid Shift" shift)))
 			 (state:shifts state))
-		 (andmap (lambda (reduce)
-			   (if (ormap (lambda (rule)
+		 (every (lambda (reduce)
+			   (if (any (lambda (rule)
 					(eq? (rule:name rule) (reduce:rule-name reduce)))
 				   rules)
 			       #t
@@ -612,7 +556,7 @@
        (not (duplicate-names (pda:rules pda) rule:name))
        (valid-gotos (pda:gotos pda) (pda:states pda) (pda:rules pda))
        (valid-state-actions (pda:states pda) (pda:rules pda))
-       (if (ormap (lambda (state) 
+       (if (any (lambda (state) 
 		    (eq? (state:name state) (pda:start-state pda)))
 		  (pda:states pda))
 	   #t
@@ -638,7 +582,8 @@
 ;;;            (lambda (input nxt-token) (StateName input '() nxt-token '())))
 ;;;
 (define (ast->code form rename compare)
-  (let ((form (cadr form))
+  (let* ((form (cadr form))
+	 (pda (compile-pda form))
 	(%letrec (rename 'letrec))
         (%lambda (rename 'lambda))
 	(%error (rename 'error))
@@ -652,21 +597,14 @@
 	(%car (rename 'car))
 	(%- (rename '-))
 	)
-    `(,%letrec ,(append (fill-in-states (cadr form) rename)
-			(fill-in-rules (cadddr form) rename)
-			(fill-in-gotos (caddr form) rename)
+    `(,%letrec ,(append (map (lambda (state) (fill-in-one-state state rename)) (pda:states pda))
+			(map (lambda (rule) (fill-in-one-rule rule rename)) (pda:rules pda))
+			(fill-in-gotos (pda:gotos pda) rename)
 			`((*start (,%lambda (input val-stack nxt-token state-stack)
 					    (,%error "Invalid Expression")))
-			  (no-shifts (,%quote ,(cadddr (cdr form)))))
+			  (no-shifts (,%quote ,(pda:noshifts pda))))
 			)
-	       (,%lambda (input nxt-token) (,(cadddr (cddr form)) input '() nxt-token '())))))
-
-;; fill-in-states : [Listof State] Renamer -> Sexp
-;; Handles all of the states into each functions
-(define (fill-in-states states-lst rename)
-  (cond ((null? states-lst) '())
-	(else (cons (fill-in-one-state (car states-lst) rename)
-		    (fill-in-states (cdr states-lst) rename)))))
+	       (,%lambda (input nxt-token) (,(pda:start-state pda) input '() nxt-token '())))))
 
 ;; fill-in-one-state : State Renamer -> Sexp
 ;; Creates one function for the state specified
@@ -678,18 +616,12 @@
 	(%let (rename 'let))
 	(%cond (rename 'cond))
 	)
-    `(,(cadr state) (,%lambda (input val-stack nxt-token state-stack)
+    `(,(state:name state) (,%lambda (input val-stack nxt-token state-stack)
 			      (,%let ((token (nxt-token input)))
-				,(cons %cond (append (fill-in-shifts  (caddr state) (cadr state) rename)
-						     (fill-in-accepts (cadddr (cdr state)) rename)
-						     (fill-in-reduces (cadddr state) (cadr state) rename))))))))
-
-;; fill-in-shifts : [Listof Shift] StateName Renamer -> Sexp
-;; Creates the cond cause foreach case where a shift is created
-(define (fill-in-shifts shifts-lst state-name rename)
-  (cond ((null? shifts-lst) '())
-	(else (cons (fill-in-one-shift (car shifts-lst) state-name rename)
-		    (fill-in-shifts (cdr shifts-lst) state-name rename)))))
+				,(cons %cond (append (map (lambda (shift) (fill-in-one-shift shift (state:name state) rename)) 
+							  (state:shifts state))
+						     (fill-in-accepts (state:accepts state) rename)
+						     (fill-in-reduces (state:reduces state) (state:name state) rename))))))))
 
 ;; fill-in-one-shift : Shift StateName Renamer -> Sexp
 ;; Creates the cond cause for the shift specified
@@ -707,12 +639,12 @@
 	(%car (rename 'car))
 	(%quote (rename 'quote))
 	)
-    `((,%member token (,%quote ,(cadr shift))) (if (,%member token no-shifts)
-					       (,(caddr shift) input
+    `((,%member token (,%quote ,(shift:lookaheads shift))) (if (,%member token no-shifts)
+					       (,(shift:next-state shift) input
 						val-stack
 						nxt-token
 						(,%cons (,%quote ,state-name) state-stack))
-					       (,(caddr shift) (,%cdr input)
+					       (,(shift:next-state shift) (,%cdr input)
 						(,%cons (,%car input) val-stack)
 						nxt-token
 						(,%cons (,%quote ,state-name) state-stack))))))
@@ -730,7 +662,7 @@
 ;; Creates each cond clause for every reduce case
 (define (fill-in-reduces reduces-lst state-name rename)
   (cond ((null? reduces-lst) '())
-	((and (null? (cadar reduces-lst)) (not (null? (cdr reduces-lst))))
+	((and (null? (reduce:lookaheads (car reduces-lst))) (not (null? (cdr reduces-lst))))
 	 (fill-in-reduces (append (cdr reduces-lst) (list (car reduces-lst))) state-name rename))
 	(else (cons (fill-in-one-reduce (car reduces-lst) state-name rename)
 		    (fill-in-reduces (cdr reduces-lst) state-name rename)))))
@@ -757,20 +689,13 @@
 	(%else (rename 'else))
 	(%cons (rename 'cons))
 	)
-    (cond ((null? (cadr reduce)) `(,%else (,(caddr reduce) input val-stack nxt-token 
+    (cond ((null? (reduce:lookaheads reduce)) `(,%else (,(reduce:rule-name reduce) input val-stack nxt-token 
 					 (,%cons (,%quote ,state-name) state-stack))))
-	  (else `((,%member token (,%quote ,(cadr reduce))) (if (,%member token no-shifts)
-							    (,(caddr reduce) input val-stack nxt-token
+	  (else `((,%member token (,%quote ,(reduce:lookaheads reduce))) (if (,%member token no-shifts)
+							    (,(reduce:rule-name reduce) input val-stack nxt-token
 							     (,%cons (quote ,state-name) state-stack))
-							    (,(caddr reduce) (,%cdr input) val-stack nxt-token
+							    (,(reduce:rule-name reduce) (,%cdr input) val-stack nxt-token
 							     (,%cons (,%quote ,state-name) state-stack))))))))
-
-;; fill-in-rules : [Listof Rule] Renamer -> Sexp
-;; Creates a function for each rule
-(define (fill-in-rules rules-lst rename)
-  (cond ((null? rules-lst) '())
-	(else (cons (fill-in-one-rule (car rules-lst) rename)
-		    (fill-in-rules (cdr rules-lst) rename)))))
 
 
 ;; fill-in-one-rule : Rule Renamer -> Sexp
@@ -782,12 +707,12 @@
 (define (fill-in-one-rule rule rename)
   (let ((%lambda (rename 'lambda))
 	)
-    `(,(cadr rule) (,%lambda (input val-stack nxt-token state-stack)
-			     (,(caddr rule) input ,(if (boolean? (cadddr (cdr rule)))
+    `(,(rule:name rule) (,%lambda (input val-stack nxt-token state-stack)
+			     (,(rule:nonterm rule) input ,(if (boolean? (rule:sem-action rule))
 						       'val-stack
-						       (applyfcn (cadddr (cdr rule)) (cadddr rule)))
+						       (applyfcn (rule:sem-action rule) (rule:arity rule)))
 			      nxt-token
-			      ,(pop-state-stack (cadddr rule)))))))
+			      ,(pop-state-stack (rule:arity rule)))))))
 
 ;; applyfcn : Function Nat -> Sexp
 ;; Removes the top n elements of the stack and applies the function on them
@@ -820,30 +745,28 @@
 ;; fill-in-gotos : [Listof Goto] Renamer -> Sexp
 ;; Creates all of the functions associated in a goto case
 (define (fill-in-gotos gotos rename)
-  (letrec ((all-nonterms (consolidate gotos '()))
-	   (fill-in-nonterms (lambda (nonterms)
-			       (cond ((null? nonterms) '())
-				     (else (cons (fill-in-nonterm (car nonterms) rename)
-						 (fill-in-nonterms (cdr nonterms))))))))
-    (fill-in-nonterms all-nonterms)))
+  (let ((all-nonterms (consolidate gotos '())))
+    (map (lambda (nonterm) (fill-in-nonterm nonterm rename)) all-nonterms)))
 
 ;; consolidate : [Listof Goto] [Listof NonTerm] -> [Listof Nonterm]
 ;; Creates a list of unique nonterms paired with all their goto mappings
-;; (consolidate '((make-goto exp s0 s1)
-;;		  (make-goto num s0 s2)
-;;		  (make-goto exp s4 s5)
-;;                (make-goto num s4 s2)))
+;; (consolidate (list (make-goto exp s0 s1)
+;;		      (make-goto num s0 s2)
+;;		      (make-goto exp s4 s5)
+;;                    (make-goto num s4 s2)))
 ;;      -> '((num ((s0 s2) (s4 s2)))
 ;;           (exp ((s0 s1) (s4  s5))))
 (define (consolidate gotos nonterms)
   (cond ((null? gotos) nonterms)
-	(else (let ((any-nonterms (filter (lambda (nonterm) (eq? (car nonterm) (cadar gotos))) nonterms)))
+	(else (let ((any-nonterms (filter (lambda (nonterm) (eq? (car nonterm) (goto:nonterm (car gotos)))) nonterms)))
 		  (if (null? any-nonterms)
-		      (consolidate (cdr gotos) (cons (list (cadar gotos) (list (list (caddar gotos) (cadddr (car gotos))))) nonterms))
-		      (consolidate (cdr gotos) (cons (list (caar any-nonterms) (cons (list (caddar gotos) (cadddr (car gotos)))
+		      (consolidate (cdr gotos) (cons (list (goto:nonterm (car gotos)) (list (list (goto:from (car gotos)) 
+												  (goto:next (car gotos))))) nonterms))
+		      (consolidate (cdr gotos) (cons (list (caar any-nonterms) (cons (list (goto:from (car gotos)) 
+											   (goto:next (car gotos)))
 										     (cadar any-nonterms)))
 						     (filter (lambda (nonterm) 
-								    (not (eq? (car nonterm) (cadar gotos)))) 
+								    (not (eq? (car nonterm) (goto:nonterm (car gotos)))))
 								  nonterms))))))))
 
 ;; fill-in-nonterm : NonTerm Renamer -> Sexp
@@ -866,13 +789,6 @@
 					      (fill-in-cases (cdr nonterm-cases))))))))
     `(,(car nonterm) (,%lambda (input val-stack nxt-token state-stack)
 		       ,(cons %cond (fill-in-cases (cadr nonterm)))))))
-
-;; pda->ast->code takes in the pda language produced from the GA Tech Code and creates
-;; workable scheme code. It first compiles the pda to an internal AST, and then is
-;; converted.
-(define (pda->ast->code form rename compare)
-  (let ((nform (compile-pda (cadr form))))
-    `(compile-pda-record-to-code ,nform)))
 
 ;;; SIMPLE LEXER FOR ADDER GRAMMAR
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

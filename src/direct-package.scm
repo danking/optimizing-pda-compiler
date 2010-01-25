@@ -17,13 +17,10 @@
 	  ast->code
 	  adder-PDA
 	  adder-PDA-record
-	  adder-PDA-Sexp
 	  new-adder-PDA
-	  new-adder-PDA-record 
-	  new-adder-PDA-Sexp
+	  new-adder-PDA-record
 	  number-test
 	  next-token
-	  pda->ast->code
 	  )
   (open scheme-with-scsh
 	srfi-1 ; list=
@@ -41,6 +38,5 @@
   (open list-lib scheme-with-scsh)
   (for-syntax (open direct-pda-record))  
   (begin
-    (define-syntax compile-pda-to-code pda->ast->code)
     (define-syntax compile-pda-record-to-code ast->code))
 )
