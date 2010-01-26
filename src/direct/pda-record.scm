@@ -131,7 +131,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Initial, really simple example -- adding (exactly) two numbers.
 ;;; (define adder
-;;;   (compile+convert-to-pda
+;;;   (parser
 ;;;    ((tokens DIGIT
 ;;; 	    (left PLUS)
 ;;; 	    (error *ERROR*)
@@ -581,7 +581,7 @@
 ;;;      -> (letrec ([LISTOF states, gotos, rules, no-shifts])
 ;;;            (lambda (input nxt-token) (StateName input '() nxt-token '())))
 ;;;
-(define (ast->code form rename compare)
+(define (pda form rename compare)
   (let* ((form (cadr form))
 	 (pda (compile-pda form))
 	(%letrec (rename 'letrec))
@@ -710,9 +710,9 @@
     `(,(rule:name rule) (,%lambda (input val-stack nxt-token state-stack)
 			     (,(rule:nonterm rule) input ,(if (boolean? (rule:sem-action rule))
 						       'val-stack
-						       (applyfcn (rule:sem-action rule) (rule:arity rule)))
+						       (applyfcn (rule:sem-action rule) (rule:arity rule) rename))
 			      nxt-token
-			      ,(pop-state-stack (rule:arity rule)))))))
+			      ,(pop-state-stack (rule:arity rule) rename))))))
 
 ;; applyfcn : Function Nat -> Sexp
 ;; Removes the top n elements of the stack and applies the function on them
@@ -722,24 +722,30 @@
 ;;                                                (args (cons (car val-stack) args))
 ;;                                                (val-stack (cdr val-stack)))
 ;;                                               (cons (apply (lambda (x y) (+ x y)) args) val-stack)
-(define (applyfcn function n)
-  (let applyfcn ((n n) (app '()))
-    (if (zero? n)
-      (cons 'let* (cons (cons '(args '()) app)
-	      (list `(cons (apply ,function args) val-stack))))
-      (applyfcn (- n 1) (cons '(args (cons (car val-stack) args))
-			      (cons '(val-stack (cdr val-stack)) 
-				    app))))))
+(define (applyfcn function n rename)
+  (let ((%let* (rename 'let*))
+	(%cons (rename 'cons))
+	(%apply (rename 'apply))
+	(%car (rename 'car))
+	(%cdr (rename 'cdr)))
+    (let applyfcn ((n n) (app '()))
+      (if (zero? n)
+	  (cons %let* (cons (cons '(args '()) app)
+			    (list `(,%cons (,%apply ,function args) val-stack))))
+	  (applyfcn (- n 1) (cons `(args (,%cons (,%car val-stack) args))
+				  (cons `(val-stack (,%cdr val-stack)) 
+					app)))))))
 			      
 
 ;; pop-state-stack : Nat -> Sexp
 ;; Pops the stack n times.
 ;; Ex: (pop-state-stack stack 3) -> '(cdr (cdr (cdr state-stack)))
 ;;     (pop-state-stack stack 0) -> 'state-stack
-(define (pop-state-stack n)
-  (if (zero? n)
-      'state-stack
-      `(cdr ,(pop-state-stack (- n 1)))))
+(define (pop-state-stack n rename)
+  (let ((%cdr (rename 'cdr)))
+    (if (zero? n)
+	'state-stack
+	`(,%cdr ,(pop-state-stack (- n 1) rename)))))
 
 
 ;; fill-in-gotos : [Listof Goto] Renamer -> Sexp
@@ -789,6 +795,7 @@
 					      (fill-in-cases (cdr nonterm-cases))))))))
     `(,(car nonterm) (,%lambda (input val-stack nxt-token state-stack)
 		       ,(cons %cond (fill-in-cases (cadr nonterm)))))))
+
 
 ;;; SIMPLE LEXER FOR ADDER GRAMMAR
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -857,51 +864,6 @@
 			       (REDUCE () r1))))
 
 (define new-adder-PDA-record (compile-pda new-adder-PDA))
-(define new-adder-PDA-Sexp '(make-pda ((make-state s0
-						   ()
-						   ((make-reduce () r5))
-						   ())
-				       (make-state s1
-						   ()
-						   ()
-						   (*EOF*))
-				       (make-state s2
-						   ((make-shift (DIGIT) s3)
-						    (make-shift (PLUS) s4))
-						   ((make-reduce (*EOF*) r3))
-						   ())
-				       (make-state s3
-						   ()
-						   ((make-reduce () r4))
-						   ())
-				       (make-state s4
-						   ()
-						   ((make-reduce () r5))
-						   ())
-				       (make-state s5
-						   ()
-						   ((make-reduce () r2))
-						   ())
-				       (make-state s6
-						   ()
-						   ((make-reduce () r1))
-						   ()))
-				       ((make-goto exp s0 s1)
-					(make-goto num s0 s2)
-					(make-goto exp s4 s5)
-					(make-goto num s4 s2))
-				       ((make-rule r1 *start 2 #f)
-					(make-rule r2 exp 3 (lambda (num-1 PLUS num-2)
-							      (+ num-1 num-2)))
-					(make-rule r3 exp 1 (lambda (num) num))
-					(make-rule r4 num 2 (lambda (num DIGIT)
-							      (+ (* num 10)
-								 DIGIT)))
-					(make-rule r5 num 0 (lambda ()
-							      0)))
-				       (*EOF*)
-				       s0))
-
 
 ;;; Number PDA Test
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

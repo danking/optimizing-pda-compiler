@@ -1,3 +1,4 @@
+
 (define-structure lalr-macro
   (export ;; semantic-action.scm
 	  compile-actions-macro-strict

@@ -35,8 +35,7 @@
 	      (=> (num PLUS num)   (+ num-1 num-2)))
     (non-term num
 	      (=> (num DIGIT)      (+ (* num 10)
-				      (- (char->ascii DIGIT)
-					 (char->ascii #\0))))
+				      DIGIT))
 	      (=> ()               0))
     )))
 
@@ -51,8 +50,7 @@
 	      (=> (num)            num))
     (non-term num
 	      (=> (num DIGIT)      (+ (* num 10)
-				      (- (char->ascii DIGIT)
-					 (char->ascii #\0))))
+				      DIGIT))
 	      (=> ()               0))
     )))
 
