@@ -368,25 +368,27 @@
 		      (new-goto (make-goto nonterm name next)))
 		 (gather rest (cons new-goto gotos) shift-clauses reduce-clauses accepts)))))))))
 
-(receive (state gs) (parse-state-sexp '(S1
-					(REDUCE (BAR) R3)
-					(GOTO exp S5)
-					(ACCEPT (DIGIT))
-					(SHIFT (L-PAREN) S4)
-					(GOTO num S7)
-					(REDUCE (FOO) R3)))
-	 (begin
-	   (assert state
-		   (make-state 'S1
-			       (list (make-shift '(L-PAREN) 'S4))
-			       (list (make-reduce '(BAR FOO) 'R3))
-			       (list 'DIGIT))
-		   state=)
-	   (assert gs
-		   (list (make-goto 'num 'S1 'S7)
-			 (make-goto 'exp 'S1 'S5))
-		   (lambda (gl1 gl2)
-		     (list= goto= gl1 gl2)))))
+(receive 
+ (state gs) 
+ (parse-state-sexp '(S1
+		     (REDUCE (BAR) R3)
+		     (GOTO exp S5)
+		     (ACCEPT (DIGIT))
+		     (SHIFT (L-PAREN) S4)
+		     (GOTO num S7)
+		     (REDUCE (FOO) R3)))
+ (begin
+   (assert state
+	   (make-state 'S1
+		       (list (make-shift '(L-PAREN) 'S4))
+		       (list (make-reduce '(BAR FOO) 'R3))
+		       (list 'DIGIT))
+	   state=)
+   (assert gs
+	   (list (make-goto 'num 'S1 'S7)
+		 (make-goto 'exp 'S1 'S5))
+	   (lambda (gl1 gl2)
+	     (list= goto= gl1 gl2)))))
 
 ;; sexp->PDA : PDA-Sexp -> PDA
 (define (sexp->PDA form)
@@ -499,17 +501,16 @@
 
 ;; duplicate-names : [List of X] (X -> Symbol) -> Boolean
 ;; Checks whether there are duplicate names in the list
-;; >>> see srfi-1 for duplicate checkers.
 (define (duplicate-names lst get-name)
-  (cond ((null? lst) #f)
-	(else (if (any (lambda (x) 
-			   (eq? (get-name x) (get-name (car lst))))
-			 (cdr lst))
-		  (error "Static Checker Error - Duplicate name " (get-name (car lst)))
-		  (duplicate-names (cdr lst) get-name)))))
+  (and (pair? lst)
+       (if (any (lambda (x) 
+		  (eq? (get-name x) (get-name (car lst))))
+		(cdr lst))
+	   (error "Static Checker Error - Duplicate name " (get-name (car lst)))
+	   (duplicate-names (cdr lst) get-name))))
 
 ;; valid-gotos : [Listof Goto] [Listof State] [Listof Rules] -> Boolean
-;; Checks whether each Goto points to a valid state names or rule nontern
+;; Checks whether each Goto points to a valid state names or rule nonterminals
 (define (valid-gotos gotos states rules)
   (every (lambda (goto)
 	    (if (and (any (lambda (state)
@@ -550,7 +551,7 @@
 ;; Verifies that the PDA is valid by doing the following:
 ;;    -- Ensuring there are no duplicate state or rule names
 ;;    -- Ensuring that each state/rule pointer is valid
-;;       in all Gotos, Shifts, and reduces
+;;       in all Gotos, Shifts, and Reduces
 (define (pda-static-check pda)
   (and (not (duplicate-names (pda:states pda) state:name))
        (not (duplicate-names (pda:rules pda) rule:name))
@@ -609,7 +610,7 @@
 ;; fill-in-one-state : State Renamer -> Sexp
 ;; Creates one function for the state specified
 ;; (make-state StateName [ListOf Shift] [ListOf Reduce] [ListOf Accept])
-;;      -> (StateName (lambda (input stack nxt-token goto-env)
+;;      -> (StateName (lambda (input val-stack nxt-token state-stack)
 ;;                      (cond [LISTOF shifts, reduces, accepts])))
 (define (fill-in-one-state state rename)
   (let ((%lambda (rename 'lambda))
@@ -624,7 +625,7 @@
 						     (fill-in-reduces (state:reduces state) (state:name state) rename))))))))
 
 ;; fill-in-one-shift : Shift StateName Renamer -> Sexp
-;; Creates the cond cause for the shift specified
+;; Creates the cond clause for the shift specified
 ;; (make-shift lookaheads StateName) 
 ;;      -> ((member token lookaheads) (if (member token no-shifts)
 ;;                                        (StateName input stack nxt-token 
@@ -638,16 +639,23 @@
 	(%cons (rename 'cons))
 	(%car (rename 'car))
 	(%quote (rename 'quote))
+	(%eq? (rename 'eq?))
 	)
-    `((,%member token (,%quote ,(shift:lookaheads shift))) (if (,%member token no-shifts)
-					       (,(shift:next-state shift) input
-						val-stack
-						nxt-token
-						(,%cons (,%quote ,state-name) state-stack))
-					       (,(shift:next-state shift) (,%cdr input)
-						(,%cons (,%car input) val-stack)
-						nxt-token
-						(,%cons (,%quote ,state-name) state-stack))))))
+    
+    `(,(if (and (pair? (shift:lookaheads shift))
+		(not (pair? (cdr (shift:lookaheads shift)))))
+	   `(,%eq? token (,%quote ,(car (shift:lookaheads shift))))
+	   `(,%member token (,%quote ,(shift:lookaheads shift))))
+      (if (,%member token no-shifts)
+	  (,(shift:next-state shift) input
+	   val-stack
+	   nxt-token
+	   (,%cons (,%quote ,state-name) state-stack))
+	  (,(shift:next-state shift) (,%cdr input)
+	   (,%cons (,%car input) val-stack)
+	   nxt-token
+	   (,%cons (,%quote ,state-name) state-stack))))))
+
 ;; fill-in-accepts : [Listof Accept] Renamer -> Sexp
 ;; Creates the cond clause if there is an accept case
 (define (fill-in-accepts accepts-lst rename)
@@ -671,7 +679,7 @@
 ;; Creates a cond clause for the reduce case specified
 ;; (make-reduce lookaheads RuleName)
 ;;    IF (null? lookaheads)
-;;      -> (else (RuleName input stack nxt-token (cons (quote StateName) goto-env)))
+;;      -> (else (RuleName input val-stack nxt-token (cons (quote StateName) state-stack)))
 ;;              where StateName is the state this function call is in
 ;;    ELSE
 ;;      -> ((member token lookaheads) (if (member token no-shifts)
@@ -688,14 +696,19 @@
 	(%quote (rename 'quote))
 	(%else (rename 'else))
 	(%cons (rename 'cons))
+	(%eq? (rename 'eq?))
 	)
     (cond ((null? (reduce:lookaheads reduce)) `(,%else (,(reduce:rule-name reduce) input val-stack nxt-token 
 					 (,%cons (,%quote ,state-name) state-stack))))
-	  (else `((,%member token (,%quote ,(reduce:lookaheads reduce))) (if (,%member token no-shifts)
-							    (,(reduce:rule-name reduce) input val-stack nxt-token
-							     (,%cons (quote ,state-name) state-stack))
-							    (,(reduce:rule-name reduce) (,%cdr input) val-stack nxt-token
-							     (,%cons (,%quote ,state-name) state-stack))))))))
+	  (else `(,(if (and (pair? (reduce:lookaheads reduce))
+			    (not (pair? (cdr (reduce:lookaheads reduce)))))
+		       `(,%eq? token (,%quote ,(car (reduce:lookaheads reduce))))
+		       `(,%member token (,%quote ,(reduce:lookaheads reduce))))
+		  (if (,%member token no-shifts)
+		      (,(reduce:rule-name reduce) input val-stack nxt-token
+		       (,%cons (quote ,state-name) state-stack))
+		      (,(reduce:rule-name reduce) (,%cdr input) val-stack nxt-token
+		       (,%cons (,%quote ,state-name) state-stack))))))))
 
 
 ;; fill-in-one-rule : Rule Renamer -> Sexp
@@ -743,9 +756,10 @@
 ;;     (pop-state-stack stack 0) -> 'state-stack
 (define (pop-state-stack n rename)
   (let ((%cdr (rename 'cdr)))
-    (if (zero? n)
-	'state-stack
-	`(,%cdr ,(pop-state-stack (- n 1) rename)))))
+    (let pop-state-stack ((n n) (stack 'state-stack))
+      (if (zero? n)
+	  stack
+	  (pop-state-stack (- n 1) `(,%cdr ,stack))))))
 
 
 ;; fill-in-gotos : [Listof Goto] Renamer -> Sexp
@@ -807,7 +821,9 @@
 	(else 'DIGIT)))
 
 
-;;; New Adder PDA Test
+;;; New Adder PDA Example
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; This example allows adding one or more numbers
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; (define new-adder
 ;;;   (compile+convert-to-pda
@@ -824,6 +840,7 @@
 ;;; 	      (=> ()               0))
 ;;;     )))
 
+;;; Resulting PDA
 (define new-adder-PDA '((TOKENS DIGIT PLUS *EOF*) 
 			(ERROR *ERROR*) 
 			(NO-SHIFT *EOF*) 
@@ -862,142 +879,3 @@
 			       (REDUCE () r2)) 
 			(STATE s6 (COMMENT *start "=>" exp *EOF* ".") 
 			       (REDUCE () r1))))
-
-(define new-adder-PDA-record (compile-pda new-adder-PDA))
-
-;;; Number PDA Test
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; (define number-test
-;;;   (compile+convert-to-pda
-;;;    ((tokens DIGIT
-;;;  	    (error *ERROR*)
-;;;  	    (eos *EOF*))
-;;;     (non-term num
-;;;  	      (=> (num DIGIT)      (+ (* num 10) DIGIT))
-;;;  	      (=> ()               0))
-;;;     )))
-
-(define number-test-pda
-  '((TOKENS DIGIT *EOF*)
-    (ERROR *ERROR*)
-    (NO-SHIFT *EOF*)
-    (RULE r1 *start 2 #f)
-    (RULE r2
-	  num
-	  2
-	  (lambda (num DIGIT)
-	    (+ (* num 10) DIGIT)))
-    (RULE r3
-	  num
-	  0
-	  (lambda ()
-	    0))
-    (STATE s0
-	   (COMMENT num "=>" ".")
-	   (COMMENT num "=>" "." num DIGIT)
-	   (COMMENT *start "=>" "." num *EOF*)
-	   (REDUCE () r3)
-	   (GOTO num s1))
-    (STATE s1
-	   (COMMENT num "=>" num "." DIGIT)
-	   (COMMENT *start "=>" num "." *EOF*)
-	   (SHIFT (DIGIT) s2)
-	   (ACCEPT (*EOF*)))
-    (STATE s2
-	   (COMMENT num "=>" num DIGIT ".")
-	   (REDUCE () r2))
-    (STATE s3
-	   (COMMENT *start "=>" num *EOF* ".")
-	   (REDUCE () r1))))
-
-(define number-test-pda-record (compile-pda number-test-pda))
-(define number-test-pda-sexp '(make-pda ((make-state s0
-						   ()
-						   ((make-reduce () r3))
-						   ())
-				       (make-state s1
-						   ((make-shift (DIGIT) s2))
-						   ()
-						   (*EOF*))
-				       (make-state s2
-						   ()
-						   ((make-reduce () r2))
-						   ())
-				       (make-state s3
-						   ()
-						   ((make-reduce () r1))
-						   ()))
-				       ((make-goto num s0 s1))
-				       ((make-rule r1 *start 2 #f)
-					(make-rule r2 num 2 (lambda (num DIGIT)
-							      (+ (* num 10) DIGIT)))
-					(make-rule r3 num 0 (lambda () 0)))
-				       (*EOF*)
-				       s0))
-
-(define number-test (letrec ((s0 (lambda (input val-stack nxt-token state-stack)
-				   (let ((token (nxt-token input)))
-				     (cond (else
-					    (r3 input
-						val-stack
-						nxt-token
-						(cons 's0 state-stack)))))))
-			     (s1 (lambda (input val-stack nxt-token state-stack)
-				   (let ((token (nxt-token input)))
-				     (cond ((member token '(DIGIT))
-					    (if (member token no-shifts)
-						(s2 input
-						    val-stack
-						    nxt-token
-						    (cons 's1 state-stack))
-						(s2 (cdr input)
-						    (cons (car input) val-stack)
-						    nxt-token
-						    (cons 's1 state-stack))))
-					   ((member token '(*EOF*)) val-stack)))))
-			     (s2 (lambda (input val-stack nxt-token state-stack)
-				   (let ((token (nxt-token input)))
-				     (cond (else
-					    (r2 input
-						val-stack
-						nxt-token
-						(cons 's2 state-stack)))))))
-			     (s3 (lambda (input val-stack nxt-token state-stack)
-				   (let ((token (nxt-token input)))
-				     (cond (else
-					    (r1 input
-						val-stack
-						nxt-token
-						(cons 's3 state-stack)))))))
-			     (r1 (lambda (input val-stack nxt-token state-stack)
-				   (*start input val-stack nxt-token (cdr (cdr state-stack)))))
-			     (r2 (lambda (input val-stack nxt-token state-stack)
-				   (num input
-					(let* ((args '())
-					       (args (cons (car val-stack) args))
-					       (val-stack (cdr val-stack))
-					       (args (cons (car val-stack) args))
-					       (val-stack (cdr val-stack)))
-					  (cons (apply (lambda (num DIGIT)
-							 (+ (* num 10) DIGIT))
-						       args)
-						val-stack))
-					nxt-token
-					(cdr (cdr state-stack)))))
-			     (r3 (lambda (input val-stack nxt-token state-stack)
-				   (num input
-					(let* ((args '()))
-					  (cons (apply (lambda ()
-							 0)
-						       args)
-						val-stack))
-					nxt-token
-					state-stack)))
-			     (num (lambda (input val-stack nxt-token state-stack)
-				    (cond ((eq? (car state-stack) 's0)
-					   (s1 input val-stack nxt-token state-stack)))))
-			     (*start (lambda (input val-stack nxt-token state-stack)
-				       (error "Invalid Expression")))
-			     (no-shifts '(*EOF*)))
-		      (lambda (input nxt-token)
-			(s0 input '() nxt-token '()))))
