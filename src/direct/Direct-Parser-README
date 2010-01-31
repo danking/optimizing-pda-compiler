@@ -1,0 +1,37 @@
+DIRECT PARSER README
+
+Ken McGrady
+
+To access the Direct Parser Package:
+   ,config ,load direct-package.scm
+   ,open lalr
+
+
+Many functions/macros will become available. The macro important macro to notice is parser, which takes a grammar and converts it to parser that parses that grammar.
+
+For example, the following code creates a parser that parses the summation of one or more numbers.
+
+;;my-parser : [Listof X] ([Listof X] -> TOKEN) -> [Listof Y]
+(define my-parser
+  (parser ((tokens DIGIT
+	    (left PLUS)
+	    (error *ERROR*)
+	    (eos *EOF*))
+    (non-term exp
+	      (=> (num PLUS exp)   (+ num exp))
+	      (=> (num)            num))
+    (non-term num
+	      (=> (num DIGIT)      (+ (* num 10)
+				      DIGIT))
+	      (=> ()               0)))))
+
+To use the parser, provide a list of elements and a lexer that tells the parser the next token based on the next subset of tokens.
+
+A (VERY) simple lexer for the parser above produces the next token based on the input list provided.
+
+(define (next-token input)                   
+  (cond ((null? input) '*EOF*)            
+	((eq? (first input) '+) 'PLUS)    
+	(else 'DIGIT)))
+
+(my-parser '(1 2 2 4 + 1 5 2 8 + 4 3 + 9) next-token) -> '(2804)
