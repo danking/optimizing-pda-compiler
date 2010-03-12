@@ -18,6 +18,8 @@
 ;;; token         ::= ident
 ;;; non-term      ::= ident
 
+;;; fixme: lowercase syntax!
+
 
 ;;; AST definition:
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -45,6 +47,8 @@
   nonterm	; a NonTerm symbol
   from		; a StateName symbol - post-reduction but pre-non-term shift.
   next) 	; a StateName symbol - where we are going.
+;; fixup: should NEXT be TO?
+
 
 (define-record accept
   lookahead)	; [ListOf Token]
@@ -377,11 +381,21 @@
 				shifts
 			       (cons (parse-reduce-action clause) reduces)
 			       accepts))
-	      ((shift) (values gotos
-			       shifts
-			       reduces
-			       (cons (accepts))
+	      ((goto) (values (cons (parse-goto-action clause) gotos)
+			      shifts
+			      reduces
+			      accepts))
+	      ((accept) (values gotos shifts reduces
+				(cons (parse-accept-action clause) accepts)))
+	      (else (error "Illegal state clause" clause)))))
+	(values '() '() '() '()))))
 
+(define (parse-shift-action clause) ...) ; make a SHIFT record.
+(define (parse-reduce-action clause) ...)
+(define (parse-goto-action clause) ...)
+(define (parse-accept-action clause) ...)
+
+;;; fixup
 (receive 
  (state gs) 
  (parse-state-sexp '(S1
@@ -449,34 +463,40 @@
 ;;PDA->sexp : PDA -> PDA-sexp
 ;;Unparses a PDA record to a PDA S-expression
 (define (PDA->sexp pda)
-  (append (list (cons 'NO-SHIFT (pda:noshifts pda)))
-	  (map (lambda (rule)
-		 `(RULE ,(rule:name rule) 
-			,(rule:nonterm rule) 
-			,(rule:arity rule)
-			,(rule:sem-action rule)))
-	       (pda:rules pda))
-	  (map (lambda (state)
-		 `(STATE ,(state:name state)
-			 ,(append (map (lambda (shift)
-					 `(SHIFT ,(shift:lookaheads shift)
-						 ,(shift:next-state shift)))
-				       (state:shifts state))
-				   (map (lambda (reduce)
-					  `(REDUCE ,(reduce:lookaheads reduce)
-						   ,(reduce:rule-name reduce)))
-					(state:reduces state))
-			  	   (map (lambda (goto)
-					  `(GOTO ,(goto:nonterm goto)
-						 ,(goto:next goto)))
-					(filter (lambda (goto)
-						  (eq? (goto:from goto) 
-						       (state:name state)))
-						(pda:gotos pda)))
-				   (if (pair? (state:accepts state))
-				       (list `(ACCEPT ,(state:accepts state)))
-				       '()))))
-	       (pda:states pda))))
+  (let ((rules (map (lambda (rule)
+		      `(RULE ,(rule:name rule) 
+			     ,(rule:nonterm rule) 
+			     ,(rule:arity rule)
+			     ,(rule:sem-action rule)))
+		    (pda:rules pda)))
+
+	(states (map (lambda (state)
+		       `(STATE ,(state:name state)
+			       ,(append (map (lambda (shift)
+					       `(SHIFT ,(shift:lookaheads shift)
+						       ,(shift:next-state shift)))
+					     (state:shifts state))
+					(map (lambda (reduce)
+					       `(REDUCE ,(reduce:lookaheads reduce)
+							,(reduce:rule-name reduce)))
+					     (state:reduces state))
+					(map (lambda (goto)
+					       `(GOTO ,(goto:nonterm goto)
+						      ,(goto:next goto)))
+					     (filter (lambda (goto)
+						       (eq? (goto:from goto) 
+							    (state:name state)))
+						     (pda:gotos pda)))
+					(if (pair? (state:accepts state))
+					    (list `(ACCEPT ,(state:accepts state)))
+					    '()))))
+		     (pda:states pda)))
+
+	(no-shift (if (pair? (pda:noshifts pda))     ; 0- or 1-elt clause list
+		      `((no-shift ,(pda:noshifts pda)))
+		      '())))
+
+    `(,@no-shift ,@rules ,@states)))
 
 
 (assert (PDA->sexp adder-PDA-record)
@@ -513,32 +533,52 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; This code checks the validity of the PDA
 
-;; duplicate-names : [List of X] (X -> Symbol) -> Boolean
-;; Checks whether there are duplicate names in the list
-(define (duplicate-names lst get-name)
-  (and (pair? lst)
-       (if (any (lambda (x) 
-		  (eq? (get-name x) (get-name (car lst))))
-		(cdr lst))
-	   (error "Static Checker Error - Duplicate name " (get-name (car lst)))
-	   (duplicate-names (cdr lst) get-name))))
+;; duplicate-names : [ListOf X] (X -> Symbol) -> Undefined
+;; Raises an error if there are duplicate names in the list.
+(define (duplicate-names xs name)
+  (let lp ((xs xs))
+    (if (pair? xs)
+	(let ((x1-name (name (car xs)))
+	      (xrest (cdr xs)))
+	  (if (any (lambda (xn) 
+		     (eq? (name xn) x1-name))
+		   xrest)
+	      (error "Static Checker Error - Duplicate name " x1-name)
+	      (lp xrest))))))
 
-;; valid-gotos : [Listof Goto] [Listof State] [Listof Rules] -> Boolean
-;; Checks whether each Goto points to a valid state names or rule nonterminals
+;;; check-goto : Goto [ListOf StateName] [ListOf RuleName] [ListOf NonTerm] 
+;;;   -> Undefined
+;;; Check a GOTO action; raise an error if there's a problem.
+(define (check-goto goto states rules nterms)
+  (if (not (member (goto:from goto) states))
+      (error "Goto action has undefined FROM state" goto)) ; fixup: unparse GOTO?
+  (if (not (member (goto:next goto) states))
+      (error "Goto action has undefined NEXT state." goto))
+  (if (not (member (goto:nonterm goto) nterms))
+      (error "Goto action has undefined non-terminal." goto)))
+
+(define (check-gotos gotos states rules nterms)
+  (for-each (lambda (g) (check-goto g states rules nterms))))
+
+
+
+;;; fixup: kill these
+;; valid-gotos : [ListOf Goto] [Listof State] [Listof Rules] -> Undefined
+;; Checks whether each Goto points to a valid state name or rule nonterminal.
 (define (valid-gotos gotos states rules)
-  (every (lambda (goto)
-	    (if (and (any (lambda (state)
-			       (eq? (state:name state) (goto:from goto)))				  
-			     states)
-		     (any (lambda (state)
-			       (eq? (state:name state) (goto:next goto)))
-			     states)
-		     (any (lambda (rule)
-			       (eq? (goto:nonterm goto) (rule:nonterm rule)))
-			     rules))
-		#t
-		(error "Static Checker Error - Invalid Goto" goto)))
-	  gotos))
+  (for-each (lambda (goto)
+	      (if (and (any (lambda (state)
+			      (eq? (state:name state) (goto:from goto)))
+			    states)
+		       (any (lambda (state)
+			      (eq? (state:name state) (goto:next goto)))
+			    states)
+		       (any (lambda (rule)
+			      (eq? (goto:nonterm goto) (rule:nonterm rule)))
+			    rules))
+		  #t
+		  (error "Static Checker Error - Invalid Goto" goto)))
+	    gotos))
 
 ;; valid-state-actions : [Listof State] [Listof Rule] -> Boolean
 ;; Checks whether the shifts and reduces of a state contain valid
@@ -582,44 +622,51 @@
 ;; compile-pda : PDA-sexp -> PDA
 ;; Parses the PDA S-expression and statically checks to ensure
 ;; the PDA is valid.
-(define (compile-pda pda-sexp)
+(define (sexp->checked-pda pda-sexp)
   (let ((pda (sexp->PDA pda-sexp)))
-    (if (pda-static-check pda)
-	pda
-	(error "Compile Failed" pda-sexp))))
+    (pda-static-check pda)
+    pda))
 
 
 ;;; PDA -> Scheme Code
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; This code converts the PDA AST to scheme code that can run on input. 
-;;; (make-pda [Listof State] [Listof Goto] [Listof Rule] [Listof No-Shift] StateName)
-;;;      -> (letrec ([LISTOF states, gotos, rules, no-shifts])
-;;;            (lambda (input nxt-token) (StateName input '() nxt-token '())))
+;;; This code converts the PDA AST to Scheme code that can run on input. 
+;;; Result code looks like this:
+;;; (letrec (state-fun1 ... goto-fun1 ... rule-fun1 ...)
+;;;   (lambda (input nxt-token) (StateName input '() nxt-token '())))
 ;;;
 (define (pda form rename compare)
   (let* ((form (cadr form))
 	 (pda (compile-pda form))
-	(%letrec (rename 'letrec))
-        (%lambda (rename 'lambda))
-	(%error (rename 'error))
-	(%quote (rename 'quote))
-	(%cond (rename 'cond))
-	(%zero? (rename 'zero?))
-	(%cons (rename 'cons))
-	(%apply (rename 'apply))
-	(%else (rename 'else))
-	(%cdr (rename 'cdr))
-	(%car (rename 'car))
-	(%- (rename '-))
-	)
-    `(,%letrec ,(append (map (lambda (state) (fill-in-one-state state rename)) (pda:states pda))
-			(map (lambda (rule) (fill-in-one-rule rule rename)) (pda:rules pda))
-			(fill-in-gotos (pda:gotos pda) rename)
-			`((*start (,%lambda (input val-stack nxt-token state-stack)
-					    (,%error "Invalid Expression")))
-			  (no-shifts (,%quote ,(pda:noshifts pda))))
-			)
-	       (,%lambda (input nxt-token) (,(pda:start-state pda) input '() nxt-token '())))))
+	 (%letrec (rename 'letrec))
+	 (%lambda (rename 'lambda))
+	 (%error  (rename 'error))
+	 (%quote  (rename 'quote))
+	 (%cond   (rename 'cond))
+	 (%zero?  (rename 'zero?))
+	 (%cons   (rename 'cons))
+	 (%apply  (rename 'apply))
+	 (%else   (rename 'else))
+	 (%cdr    (rename 'cdr))
+	 (%car    (rename 'car))
+	 (%-      (rename '-))
+
+	 ;; letrec bindings for the various functions.
+	 (state-bindings (map (lambda (state) (state->proc state rename))
+			      (pda:states pda)))
+	 (rule-bindings  (map (lambda (rule) (rule->proc rule rename))
+			      (pda:rules pda)))
+	 (goto-bindings  (gotos->procs (pda:gotos pda) rename)
+	 )
+    `(,%letrec (,@state-bindings
+		,@rule-funs
+		,@goto-bindings
+		(*start (,%lambda (input val-stack nxt-token state-stack)
+			  (,%error "Invalid Expression")))
+		(no-shifts (,%quote ,(pda:noshifts pda))))
+       (,%lambda (input nxt-token)
+         (,(pda:start-state pda) input '() nxt-token '())))))
+         ;; fixme: need to rename the start-state reference.
 
 ;; fill-in-one-state : State Renamer -> Sexp
 ;; Creates one function for the state specified
