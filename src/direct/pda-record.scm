@@ -29,46 +29,44 @@
 ;;; Accept = Symbol
 ;;; No-Shift = Symbol
 
-;; A Shift is (make-shift [ListOf Token] StateName)
 (define-record shift
-  lookaheads
-  next-state)
+  lookaheads	; [ListOf Token] -- lookahead that guards the shift
+  next-state)	; StateName -- shift target
 
-;; A Reduce is (make-reduce [ListOf Token] RuleName)
+;;; Note: lookahead specs are "cumulative," meaning a shift or reduce
+;;; action fires if (1) its lookahead matches *and* (2) the lookaheads
+;;; of *all* the previous actions *didn't* match.
+
 (define-record reduce
-  lookaheads
-  rule-name)
+  lookaheads	; [ListOf Token] -- the lookahead that guards the reduction.
+  rule-name)	; RuleName -- name of the reduction to do.
 
-;; A Goto is (make-goto NonTerm StateName StateName)
-;; nonterm : Non-terminal that has just been produced
-;; from : Current state (after reduction)
-;; next : Next state (to transition to)
 (define-record goto
-  nonterm
-  from
-  next) 
+  nonterm	; a NonTerm symbol
+  from		; a StateName symbol - post-reduction but pre-non-term shift.
+  next) 	; a StateName symbol - where we are going.
 
-;; A State is (make-state StateName [ListOf Shift] [ListOf Reduce] [ListOf Accept])
+(define-record accept
+  lookahead)	; [ListOf Token]
+
 (define-record state
-  name
-  shifts
-  reduces
-  accepts)
+  name		; StateName
+  shifts	; [ListOf Shift]
+  reduces	; [ListOf Reduce]
+  accepts)	; [ListOf Accept]
 
-;; A Rule is (make-rule RuleName NonTerm Nat SemAction)
 (define-record rule
-  name
-  nonterm
-  arity
-  sem-action)
+  name		; RuleName
+  nonterm	; NonTerm
+  arity		; NatNum
+  sem-action)	; Scheme expression
 
-;; A PDA is (make-pda [Listof State] [Listof Goto] [Listof Rule] [Listof No-Shift] StateName)
 (define-record pda
-  states
-  gotos
-  rules
-  noshifts
-  start-state)
+  states	; [ListOf State]
+  gotos		; [ListOf GoTo]
+  rules		; [ListOf Rule]
+  noshifts	; [ListOf No-Shift]
+  start-state)	; StateName
 
 
 ;;; Equality and modification functions for AST items
@@ -82,25 +80,23 @@
 
 (assert (shift= (make-shift '(FOO BAR) 'S1)
 		(make-shift '(FOO BAR) 'S1)))
-(assert (shift= (make-shift '(FOO BAR) 'S2)
-		(make-shift '(FOO BAR) 'S1))
-	#f)
-(assert (shift= (make-shift '(FOO BAR) 'S1)
-		(make-shift '(BAR) 'S1))
-	#f)
+(assert (not (shift= (make-shift '(FOO BAR) 'S2)
+		     (make-shift '(FOO BAR) 'S1))))
+(assert (not (shift= (make-shift '(FOO BAR) 'S1)
+		     (make-shift '(BAR) 'S1))))
 
 ;; reduce= : Reduce Reduce -> Boolean
 ;; Compare two reduce actions
 (define (reduce= r1 r2)
   (and (equal? (reduce:lookaheads r1) (reduce:lookaheads r2))
-       (eq?    (reduce:rule-name r1)  (reduce:rule-name r2))))
+       (eq?    (reduce:rule-name  r1) (reduce:rule-name  r2))))
 
 ;; goto= : Goto Goto -> Boolean
 ;; Returns true if the arguments are equal Gotos
 (define (goto= g1 g2)
   (and (eq? (goto:nonterm g1) (goto:nonterm g2))
-       (eq? (goto:from g1)    (goto:from g2))
-       (eq? (goto:next g1)    (goto:next g2))))
+       (eq? (goto:from    g1) (goto:from    g2))
+       (eq? (goto:next    g1) (goto:next    g2))))
 
 ;;state= : State State -> Boolean
 ;;Returns true if the two inputs are equal.
@@ -249,19 +245,17 @@
 
 ;; *-Sexp is a * represented as an S-expression (ie not a record)
 
-;; update-or-add : [Listof Any] [Any -> Boolean] [Any -> Any] Any -> [Listof Any]
-;; Find the first item that matches pred?, run it through modify, and
-;; replace it with the output of modify. If nothing matches, add or-add to the end.
+;; update-or-add : [Listof X] [X -> Boolean] [X -> X] X -> [Listof X]
+;; Find the first element E that matches PRED?, and replace it with
+;; (MODIFY E). If nothing matches, add OR-ADD to the end.
 ;; Not tail-recursive.
 (define (update-or-add old pred? modify or-add)
-  (cond ((null? old)
-	 (list or-add))
-	((pred? (car old))
-	 (cons (modify (car old))
-	       (cdr old)))
-	(else
-	 (cons (car old)
-	       (update-or-add (cdr old) pred? modify or-add)))))
+  (let recur ((elts old))
+    (if (pair? elts)
+	(let ((e1 (car elts)))
+	  (if (pred? e1) (cons (modify e1) (cdr e1))
+	      (cons e1 (recur (cdr e1)))))
+	(list or-add))))
 
 (assert (update-or-add '(1 2 3 4 5 6 7)
 		       (lambda (x) (= x 3))
@@ -340,8 +334,8 @@
 	 (clauses (cdr sexp)))
     (let gather ((remain clauses)
 		 (gotos '())
-		 (shift-clauses '()) ; [Listof (Token StateName)]
-		 (reduce-clauses '()) ; [Listof (Token RuleName)]
+		 (shift-clauses '())  ; [Listof Shift] <- lie
+		 (reduce-clauses '()) ; [Listof Reduce] <- lie; fixup
 		 (accepts '()))
       (if (null? remain)
 	  (values (make-state name
@@ -367,6 +361,26 @@
 		      (next (cadr data))
 		      (new-goto (make-goto nonterm name next)))
 		 (gather rest (cons new-goto gotos) shift-clauses reduce-clauses accepts)))))))))
+
+(define (parse-state-sexp sexp)
+  (let recur ((clauses (cdr sexp)))
+    (if (pair? clauses)
+	(let ((clause (car clauses)))
+	  (receive (gotos shifts reduces accepts) (recur (cdr clauses))
+	    (case (car clause)
+	      ((comment) (values gotos shifts reduces accepts))
+	      ((shift) (values gotos
+			       (cons (parse-shift-action clause) shifts)
+			       reduces
+			       accepts))
+	      ((reduce) (values gotos
+				shifts
+			       (cons (parse-reduce-action clause) reduces)
+			       accepts))
+	      ((shift) (values gotos
+			       shifts
+			       reduces
+			       (cons (accepts))
 
 (receive 
  (state gs) 
