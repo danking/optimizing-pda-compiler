@@ -1,4 +1,10 @@
 
+(define-structure olins-defrec-macro
+  (export define-record)
+  (for-syntax (open scheme error-package srfi-8 records))
+  (open scheme records record-types)
+  (files defrec))
+
 (define-structure lalr-macro
   (export ;; semantic-action.scm
 	  compile-actions-macro-strict
