@@ -141,7 +141,7 @@
 
         `(,%begin
           (,%define ,type-name
-                    (,%make-record-type ,(s->s name) ',fields))
+                    (,%make-record-type ',name ',fields))
 
           ;; Maker proc (MAKE-EMPLOYEE name id-number sex married?)
           (,%define ,maker-name
