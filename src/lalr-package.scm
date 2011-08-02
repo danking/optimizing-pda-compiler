@@ -15,15 +15,16 @@
 	  ;; engine.scm
 	  parse/pda-macro)
 
-  (open list-lib string-lib tables scheme-with-scsh defrec-package)
+  (for-syntax (open olins-defrec-macro))
+  (open srfi-1 error-package tables scheme-with-scsh olins-defrec-macro)
   (files semantic-action lalr cfg engine))
 
 (define-structure lalr-temp
   (export (compile-actions :syntax) (compile-actions-cps :syntax)
 	  (cfg->pda :syntax) (cfg->pda-cps :syntax)
 	  (parse/pda :syntax))
-  (open list-lib scheme-with-scsh)
-  (for-syntax (open lalr-macro))  
+  (open srfi-1 scheme-with-scsh error-package)
+  (for-syntax (open lalr-macro))
   (begin
     (define-syntax compile-actions compile-actions-macro-strict)
     (define-syntax compile-actions-cps compile-actions-macro-cps)
