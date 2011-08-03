@@ -50,5 +50,4 @@
 	       (=> (exp MINUS exp)			(- exp-1 exp-2))
 	       (=> ((expA exp) TIMES (expB exp))	(* expA expB))
 	       (=> ((expA exp) DIVIDE exp)		(quotient expA exp))
-	       (=> (L-PAREN exp R-PAREN)		exp))
-)))
+	       (=> (L-PAREN exp R-PAREN)		exp)))))
