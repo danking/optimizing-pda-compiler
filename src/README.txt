@@ -39,6 +39,10 @@ of this program.  What follows are the steps required to load it:
   > ,load examples.scm
   examples.scm
 
+  ,config ,load lalr-package.scm
+  ,open lalr
+  ,load examples.scm
+
 In examples.scm, the variable CALCULATOR holds the parser program.  Some sample
 uses of this are:
 
