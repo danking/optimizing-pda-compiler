@@ -16,6 +16,7 @@
 	  parse/pda-macro)
 
   (for-syntax (open olins-defrec-macro))
+  (for-syntax (files cfg))
   (open srfi-1 error-package tables scheme-with-scsh olins-defrec-macro)
   (files semantic-action lalr cfg engine))
 
