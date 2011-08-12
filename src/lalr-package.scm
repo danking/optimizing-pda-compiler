@@ -34,9 +34,9 @@
 
 (define-structure lalr
   (export (compile-actions :syntax) (compile-actions-cps :syntax)
-	  (cfg->pda :syntax) (cfg->pda-cps :syntax)
-	  (parse/pda :syntax)
-	  (parse/cfg :syntax) (parse/compiled-cfg :syntax)
-	  (convert-to-pda :syntax) (compile+convert-to-pda :syntax))
+          (cfg->pda :syntax) (cfg->pda-cps :syntax)
+          (parse/pda :syntax)
+          (parse/cfg :syntax) (parse/compiled-cfg :syntax)
+          (convert-to-pda :syntax) (compile+convert-to-pda :syntax))
   (open scheme lalr-temp)
   (files macro-glue))
